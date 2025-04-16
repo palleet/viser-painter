@@ -271,7 +271,6 @@ export function SynchronizedCameraControls() {
 
     const three_camera = camera;
     const camera_control = viewer.cameraControlRef.current;
-    const canvas = viewer.canvasRef.current!;
 
     if (camera_control === null) {
       // Camera controls not yet ready, let's re-try later.
@@ -313,8 +312,7 @@ export function SynchronizedCameraControls() {
         R_world_camera.z,
       ],
       position: t_world_camera.toArray(),
-      image_height: canvas.height,
-      image_width: canvas.width,
+      aspect: three_camera.aspect,
       fov: (three_camera.fov * Math.PI) / 180.0,
       near: three_camera.near,
       far: three_camera.far,

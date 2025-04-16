@@ -75,8 +75,10 @@ def _get_ts_type(typ: Type[Any]) -> str:
         return (
             "("
             + " | ".join(
-                # We're using dictionary as an ordered set.
-                {_get_ts_type(t): None for t in get_args(typ)}.keys()
+                map(
+                    _get_ts_type,
+                    get_args(typ),
+                )
             )
             + ")"
         )

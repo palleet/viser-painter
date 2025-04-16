@@ -41,7 +41,6 @@ from ._gui_handles import (
     GuiDropdownHandle,
     GuiEvent,
     GuiFolderHandle,
-    GuiHtmlHandle,
     GuiImageHandle,
     GuiMarkdownHandle,
     GuiModalHandle,
@@ -218,7 +217,7 @@ class GuiApi:
             _messages.GuiUpdateMessage, self._handle_gui_updates
         )
         self._websock_interface.register_handler(
-            _messages.FileTransferStartUpload, self._handle_file_transfer_start
+            _messages.FileTransferStart, self._handle_file_transfer_start
         )
         self._websock_interface.register_handler(
             _messages.FileTransferPart,
@@ -292,7 +291,7 @@ class GuiApi:
             handle_state.sync_cb(client_id, updates_cast)
 
     def _handle_file_transfer_start(
-        self, client_id: ClientId, message: _messages.FileTransferStartUpload
+        self, client_id: ClientId, message: _messages.FileTransferStart
     ) -> None:
         if message.source_component_uuid not in self._gui_input_handle_from_uuid:
             return
@@ -632,44 +631,6 @@ class GuiApi:
         handle.content = content
         return handle
 
-    def add_html(
-        self,
-        content: str,
-        order: float | None = None,
-        visible: bool = True,
-    ) -> GuiHtmlHandle:
-        """Add HTML to the GUI.
-
-        Args:
-            content: HTML content to display.
-            order: Optional ordering, smallest values will be displayed first.
-            visible: Whether the component is visible.
-
-        Returns:
-            A handle that can be used to interact with the GUI element.
-        """
-        message = _messages.GuiHtmlMessage(
-            uuid=_make_uuid(),
-            container_uuid=self._get_container_uuid(),
-            props=_messages.GuiHtmlProps(
-                order=_apply_default_order(order),
-                content=content,
-                visible=visible,
-            ),
-        )
-        self._websock_interface.queue_message(message)
-
-        handle = GuiHtmlHandle(
-            _GuiHandleState(
-                message.uuid,
-                self,
-                None,
-                props=message.props,
-                parent_container_id=message.container_uuid,
-            ),
-        )
-        return handle
-
     def add_image(
         self,
         image: np.ndarray,
@@ -979,19 +940,16 @@ class GuiApi:
         self,
         label: str,
         initial_value: str,
-        multiline: bool = False,
         disabled: bool = False,
         visible: bool = True,
         hint: str | None = None,
         order: float | None = None,
     ) -> GuiTextHandle:
-        r"""Add a text input to the GUI.
+        """Add a text input to the GUI.
 
         Args:
             label: Label to display on the text input.
             initial_value: Initial value of the text input.
-            multiline: Whether the text input supports multiple lines, delimited with
-                the \n character.
             disabled: Whether the text input is disabled.
             visible: Whether the text input is visible.
             hint: Optional hint to display on hover.
@@ -1017,7 +975,6 @@ class GuiApi:
                         hint=hint,
                         disabled=disabled,
                         visible=visible,
-                        multiline=multiline,
                     ),
                 ),
             )
@@ -1603,14 +1560,14 @@ class GuiApi:
             )
         )
 
-    class _GuiMessage(Protocol[GuiInputPropsType]):
+    class GuiMessage(Protocol[GuiInputPropsType]):
         uuid: str
         props: GuiInputPropsType
 
     def _create_gui_input(
         self,
         value: T,
-        message: _GuiMessage,
+        message: GuiMessage,
         is_button: bool = False,
     ) -> _GuiHandleState[T]:
         """Private helper for adding a simple GUI element."""

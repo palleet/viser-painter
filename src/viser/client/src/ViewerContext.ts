@@ -69,9 +69,6 @@ export type ViewerContextContents = {
       }[];
     };
   }>;
-
-  // Global hover state tracking for cursor management
-  hoveredElementsCount: React.MutableRefObject<number>;
 };
 export const ViewerContext = React.createContext<null | ViewerContextContents>(
   null,

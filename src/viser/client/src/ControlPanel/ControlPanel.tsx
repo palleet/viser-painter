@@ -214,11 +214,10 @@ function ShareButton() {
     if (!connected && shareModalOpened) closeShareModal();
   }, [connected, shareModalOpened]);
 
-  const colorScheme = useMantineColorScheme().colorScheme;
-
   if (viewer.useGui((state) => state.theme).show_share_button === false)
     return null;
 
+  const colorScheme = useMantineColorScheme().colorScheme;
   return (
     <>
       <Tooltip

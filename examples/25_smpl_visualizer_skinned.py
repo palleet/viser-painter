@@ -79,6 +79,7 @@ class SmplHelper:
 def main(model_path: Path) -> None:
     server = viser.ViserServer()
     server.scene.set_up_direction("+y")
+    server.gui.configure_theme(control_layout="collapsible")
 
     # Main loop. We'll read pose/shape from the GUI elements, compute the mesh,
     # and then send the updated mesh in a loop.
@@ -100,7 +101,6 @@ def main(model_path: Path) -> None:
         wireframe=gui_elements.gui_wireframe.value,
         color=gui_elements.gui_rgb.value,
     )
-    server.scene.add_grid("/grid", position=(0.0, -1.3, 0.0), plane="xz")
 
     while True:
         # Do nothing if no change.

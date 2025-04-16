@@ -17,8 +17,6 @@ from . import transforms as tf
 from ._scene_handles import (
     AmbientLightHandle,
     BatchedAxesHandle,
-    BatchedGlbHandle,
-    BatchedMeshHandle,
     BoneState,
     CameraFrustumHandle,
     DirectionalLightHandle,
@@ -269,7 +267,6 @@ class SceneApi:
         name: str,
         color: Tuple[int, int, int] = (255, 255, 255),
         intensity: float = 1.0,
-        cast_shadow: bool = False,
         wxyz: tuple[float, float, float, float] | np.ndarray = (1.0, 0.0, 0.0, 0.0),
         position: tuple[float, float, float] = (0.0, 0.0, 0.0),
         visible: bool = True,
@@ -282,7 +279,6 @@ class SceneApi:
                 define a kinematic tree.
             color: Color of the light.
             intensity: Light's strength/intensity.
-            cast_shadow: If set to true light will cast dynamic shadows
             wxyz: Quaternion rotation to parent frame from local frame (R_pl).
             position: Translation to parent frame from local frame (t_pl).
             visible: Whether or not this scene node is initially visible.
@@ -292,7 +288,7 @@ class SceneApi:
         """
 
         message = _messages.DirectionalLightMessage(
-            name, _messages.DirectionalLightProps(color, intensity, cast_shadow)
+            name, _messages.DirectionalLightProps(color, intensity)
         )
         return DirectionalLightHandle._make(
             self, message, name, wxyz, position, visible
@@ -367,7 +363,6 @@ class SceneApi:
         intensity: float = 1.0,
         distance: float = 0.0,
         decay: float = 2.0,
-        cast_shadow: bool = False,
         wxyz: tuple[float, float, float, float] | np.ndarray = (1.0, 0.0, 0.0, 0.0),
         position: tuple[float, float, float] = (0.0, 0.0, 0.0),
         visible: bool = True,
@@ -382,7 +377,6 @@ class SceneApi:
             intensity: Light's strength/intensity.
             distance: Maximum distance of light.
             decay: The amount the light dims along the distance of the light.
-            cast_shadow: If set to true light will cast dynamic shadows
             wxyz: Quaternion rotation to parent frame from local frame (R_pl).
             position: Translation to parent frame from local frame (t_pl).
             visible: Whether or not this scene node is initially visible.
@@ -398,7 +392,6 @@ class SceneApi:
                 intensity=intensity,
                 distance=distance,
                 decay=decay,
-                cast_shadow=cast_shadow,
             ),
         )
         return PointLightHandle._make(self, message, name, wxyz, position, visible)
@@ -452,7 +445,6 @@ class SceneApi:
         penumbra: float = 0.0,
         decay: float = 2.0,
         intensity: float = 1.0,
-        cast_shadow: bool = False,
         wxyz: tuple[float, float, float, float] | np.ndarray = (1.0, 0.0, 0.0, 0.0),
         position: tuple[float, float, float] = (0.0, 0.0, 0.0),
         visible: bool = True,
@@ -471,7 +463,6 @@ class SceneApi:
                 Between 0 and 1.
             decay: The amount the light dims along the distance of the light.
             intensity: Light's strength/intensity.
-            cast_shadow: If set to true light will cast dynamic shadows
             wxyz: Quaternion rotation to parent frame from local frame (R_pl).
             position: Translation to parent frame from local frame (t_pl).
             visible: Whether or not this scene node is initially visible.
@@ -483,12 +474,12 @@ class SceneApi:
         message = _messages.SpotLightMessage(
             name,
             _messages.SpotLightProps(
-                color, intensity, distance, angle, penumbra, decay, cast_shadow
+                color, intensity, distance, angle, penumbra, decay
             ),
         )
         return SpotLightHandle._make(self, message, name, wxyz, position, visible)
 
-    def configure_environment_map(
+    def set_environment_map(
         self,
         hdri: None
         | Literal[
@@ -520,7 +511,7 @@ class SceneApi:
             0.0,
         ),
     ) -> None:
-        """Configure the environment map for the scene. This will set some lights and background.
+        """Set the environment map for the scene. This will set some lights and background.
 
         Args:
             hdri: Preset HDRI environment to use.
@@ -543,39 +534,18 @@ class SceneApi:
             )
         )
 
-    def configure_default_lights(
-        self,
-        enabled: bool = True,
-        cast_shadow: bool = True,
-    ) -> None:
-        """Configure the default lights in the scene.
+    def enable_default_lights(self, enabled: bool = True) -> None:
+        """Enable/disable the default lights in the scene. If not otherwise
+        specified, default lighting will be enabled.
 
         This does not affect lighting from the environment map. To turn these off,
-        see :meth:`SceneApi.configure_environment_map()`.
+        see :meth:`SceneApi.set_environment_map()`.
 
         Args:
-            enabled: Whether or not the lights are enabled.
-            cast_shadow: Whether to cast shadows. Disabling can improve performance.
+            enabled: True if user wants default lighting. False if user does
+                not want default lighting.
         """
-        self._websock_interface.queue_message(
-            _messages.EnableLightsMessage(enabled, cast_shadow)
-        )
-
-    if not TYPE_CHECKING:
-
-        def enable_default_lights(self, *args, **kwargs) -> None:
-            warnings.warn(
-                "The 'enable_default_lights' method has been renamed to 'configure_default_lights'.",
-                DeprecationWarning,
-            )
-            return self.configure_default_lights(*args, **kwargs)
-
-        def set_environment_map(self, *args, **kwargs) -> None:
-            warnings.warn(
-                "The 'set_environment_map' method has been renamed to 'configure_environment_map'.",
-                DeprecationWarning,
-            )
-            return self.configure_environment_map(*args, **kwargs)
+        self._websock_interface.queue_message(_messages.EnableLightsMessage(enabled))
 
     def add_glb(
         self,
@@ -585,8 +555,6 @@ class SceneApi:
         wxyz: tuple[float, float, float, float] | np.ndarray = (1.0, 0.0, 0.0, 0.0),
         position: tuple[float, float, float] | np.ndarray = (0.0, 0.0, 0.0),
         visible: bool = True,
-        cast_shadow: bool = True,
-        receive_shadow: bool = True,
     ) -> GlbHandle:
         """Add a general 3D asset via binary glTF (GLB).
 
@@ -604,15 +572,11 @@ class SceneApi:
             wxyz: Quaternion rotation to parent frame from local frame (R_pl).
             position: Translation to parent frame from local frame (t_pl).
             visible: Whether or not this scene node is initially visible.
-            cast_shadow: Whether this node should cast shadows.
-            receive_shadow: Whether this node should receive shadows.
 
         Returns:
             Handle for manipulating scene node.
         """
-        message = _messages.GlbMessage(
-            name, _messages.GlbProps(glb_data, scale, cast_shadow, receive_shadow)
-        )
+        message = _messages.GlbMessage(name, _messages.GlbProps(glb_data, scale))
         return GlbHandle._make(self, message, name, wxyz, position, visible)
 
     def add_line_segments(
@@ -683,10 +647,8 @@ class SceneApi:
         This method creates a spline based on a set of positions and interpolates
         them using the Catmull-Rom algorithm. This can be used to create smooth curves.
 
-        .. note::
-
-            If many splines are needed, :meth:`add_line_segments()` supports
-            batching and will be more efficient.
+        If many splines are needed, it'll be more efficient to batch them in
+        :meth:`add_line_segments()`.
 
         Args:
             name: A scene tree name. Names in the format of /parent/child can be used to
@@ -744,10 +706,8 @@ class SceneApi:
         positions and control points. It is useful for creating complex, smooth,
         curving shapes.
 
-        .. note::
-
-            If many splines are needed, :meth:`add_line_segments()` supports
-            batching and will be more efficient.
+        If many splines are needed, it'll be more efficient to batch them in
+        :meth:`add_line_segments()`.
 
         Args:
             name: A scene tree name. Names in the format of /parent/child can be used to
@@ -803,8 +763,6 @@ class SceneApi:
         wxyz: tuple[float, float, float, float] | np.ndarray = (1.0, 0.0, 0.0, 0.0),
         position: tuple[float, float, float] | np.ndarray = (0.0, 0.0, 0.0),
         visible: bool = True,
-        cast_shadow: bool = True,
-        receive_shadow: bool = True,
         *_removed_kwargs,
     ) -> CameraFrustumHandle:
         """Add a camera frustum to the scene for visualization.
@@ -830,8 +788,6 @@ class SceneApi:
             wxyz: Quaternion rotation to parent frame from local frame (R_pl).
             position: Translation to parent frame from local frame (t_pl).
             visible: Whether or not this scene node is initially visible.
-            cast_shadow: Whether this frustum should cast shadows.
-            receive_shadow: Whether this frustum should receive shadows.
 
         Returns:
             Handle for manipulating scene node.
@@ -861,8 +817,6 @@ class SceneApi:
                 color=_encode_rgb(color),
                 image_media_type=media_type,
                 _image_data=binary,
-                cast_shadow=cast_shadow,
-                receive_shadow=receive_shadow,
             ),
         )
         handle = CameraFrustumHandle._make(self, message, name, wxyz, position, visible)
@@ -967,8 +921,8 @@ class SceneApi:
         assert batched_wxyzs.shape == (num_axes, 4)
         assert batched_positions.shape == (num_axes, 3)
         props = _messages.BatchedAxesProps(
-            batched_wxyzs=batched_wxyzs.astype(np.float32),
-            batched_positions=batched_positions.astype(np.float32),
+            wxyzs_batched=batched_wxyzs.astype(np.float32),
+            positions_batched=batched_positions.astype(np.float32),
             axes_length=axes_length,
             axes_radius=axes_radius,
         )
@@ -992,7 +946,6 @@ class SceneApi:
         section_color: RgbTupleOrArray = (140, 140, 140),
         section_thickness: float = 1.0,
         section_size: float = 1.0,
-        shadow_opacity: float = 0.125,
         wxyz: tuple[float, float, float, float] | np.ndarray = (1.0, 0.0, 0.0, 0.0),
         position: tuple[float, float, float] | np.ndarray = (0.0, 0.0, 0.0),
         visible: bool = True,
@@ -1014,7 +967,6 @@ class SceneApi:
             section_color: Color of the grid sections as an RGB tuple.
             section_thickness: Thickness of the section lines.
             section_size: Size of each section in the grid.
-            shadow_opacity: Opacity of shadows casted onto grid plane, 0: no shadows, 1: black shadows
             wxyz: Quaternion rotation to parent frame from local frame (R_pl).
             position: Translation to parent frame from local frame (t_pl).
             visible: Whether or not this scene node is initially visible.
@@ -1036,7 +988,6 @@ class SceneApi:
                 section_color=_encode_rgb(section_color),
                 section_thickness=section_thickness,
                 section_size=section_size,
-                shadow_opacity=shadow_opacity,
             ),
         )
         return GridHandle._make(self, message, name, wxyz, position, visible)
@@ -1076,7 +1027,6 @@ class SceneApi:
         point_shape: Literal[
             "square", "diamond", "circle", "rounded", "sparkle"
         ] = "square",
-        precision: Literal["float16", "float32"] = "float16",
         wxyz: tuple[float, float, float, float] | np.ndarray = (1.0, 0.0, 0.0, 0.0),
         position: tuple[float, float, float] | np.ndarray = (0.0, 0.0, 0.0),
         visible: bool = True,
@@ -1089,8 +1039,6 @@ class SceneApi:
             colors: Colors of points. Should have shape (N, 3) or (3,).
             point_size: Size of each point.
             point_shape: Shape to draw each point.
-            precision: Precision of the point cloud data. The input points array
-                will be cast to this precision.
             wxyz: Quaternion rotation to parent frame from local frame (R_pl).
             position: Translation to parent frame from local frame (t_pl).
             visible: Whether or not this scene node is initially visible.
@@ -1106,19 +1054,23 @@ class SceneApi:
             points.shape,
             (3,),
         }, "Shape of colors should be (N, 3) or (3,)."
+
+        if colors_cast.shape == (3,):
+            colors_cast = np.tile(colors_cast[None, :], reps=(points.shape[0], 1))
+
         message = _messages.PointCloudMessage(
             name=name,
             props=_messages.PointCloudProps(
-                points=points.astype(
-                    {
-                        "float16": np.float16,
-                        "float32": np.float32,
-                    }[precision]
-                ),
+                points=points.astype(np.float16),
                 colors=colors_cast,
                 point_size=point_size,
-                point_shape=point_shape,
-                precision=precision,
+                point_ball_norm={
+                    "square": float("inf"),
+                    "diamond": 1.0,
+                    "circle": 2.0,
+                    "rounded": 3.0,
+                    "sparkle": 0.6,
+                }[point_shape],
             ),
         )
         return PointCloudHandle._make(self, message, name, wxyz, position, visible)
@@ -1140,8 +1092,6 @@ class SceneApi:
         wxyz: Tuple[float, float, float, float] | np.ndarray = (1.0, 0.0, 0.0, 0.0),
         position: Tuple[float, float, float] | np.ndarray = (0.0, 0.0, 0.0),
         visible: bool = True,
-        cast_shadow: bool = True,
-        receive_shadow: bool = True,
     ) -> MeshSkinnedHandle:
         """Add a skinned mesh to the scene, which we can deform using a set of
         bone transformations.
@@ -1168,8 +1118,6 @@ class SceneApi:
             wxyz: Quaternion rotation to parent frame from local frame (R_pl).
             position: Translation from parent frame to local frame (t_pl).
             visible: Whether or not this mesh is initially visible.
-            cast_shadow: Whether this skinned mesh should cast shadows.
-            receive_shadow: Whether this skinned mesh should receive shadows.
 
         Returns:
             Handle for manipulating scene node.
@@ -1217,8 +1165,6 @@ class SceneApi:
                 bone_positions=bone_positions.astype(np.float32),
                 skin_indices=top4_skin_indices.astype(np.uint16),
                 skin_weights=top4_skin_weights.astype(np.float32),
-                cast_shadow=cast_shadow,
-                receive_shadow=receive_shadow,
             ),
         )
         handle = MeshHandle._make(self, message, name, wxyz, position, visible)
@@ -1252,8 +1198,6 @@ class SceneApi:
         wxyz: tuple[float, float, float, float] | np.ndarray = (1.0, 0.0, 0.0, 0.0),
         position: tuple[float, float, float] | np.ndarray = (0.0, 0.0, 0.0),
         visible: bool = True,
-        cast_shadow: bool = True,
-        receive_shadow: bool = True,
     ) -> MeshHandle:
         """Add a mesh to the scene.
 
@@ -1274,8 +1218,6 @@ class SceneApi:
             wxyz: Quaternion rotation to parent frame from local frame (R_pl).
             position: Translation from parent frame to local frame (t_pl).
             visible: Whether or not this mesh is initially visible.
-            cast_shadow: Whether this mesh should cast shadows.
-            receive_shadow: Whether this mesh should receive shadows.
 
         Returns:
             Handle for manipulating scene node.
@@ -1301,8 +1243,6 @@ class SceneApi:
                 flat_shading=flat_shading,
                 side=side,
                 material=material,
-                cast_shadow=cast_shadow,
-                receive_shadow=receive_shadow,
             ),
         )
         return MeshHandle._make(self, message, name, wxyz, position, visible)
@@ -1342,160 +1282,6 @@ class SceneApi:
                 position=position,
                 visible=visible,
             )
-
-    def add_batched_meshes_simple(
-        self,
-        name: str,
-        vertices: np.ndarray,
-        faces: np.ndarray,
-        batched_wxyzs: tuple[tuple[float, float, float, float], ...] | np.ndarray,
-        batched_positions: tuple[tuple[float, float, float], ...] | np.ndarray,
-        lod: Literal["auto", "off"] | tuple[tuple[float, float], ...] = "auto",
-        color: RgbTupleOrArray = (90, 200, 255),
-        wireframe: bool = False,
-        opacity: float | None = None,
-        material: Literal["standard", "toon3", "toon5"] = "standard",
-        flat_shading: bool = False,
-        side: Literal["front", "back", "double"] = "front",
-        wxyz: tuple[float, float, float, float] | np.ndarray = (1.0, 0.0, 0.0, 0.0),
-        position: tuple[float, float, float] | np.ndarray = (0.0, 0.0, 0.0),
-        visible: bool = True,
-        cast_shadow: bool = True,
-        receive_shadow: bool = True,
-    ) -> BatchedMeshHandle:
-        """Add batched meshes to the scene.
-
-        Note:
-            Batched mesh instances are optimized for rendering many instances of the
-            same mesh efficiently.
-
-        Args:
-            name: A scene tree name. Names in the format of /parent/child can be used to
-                define a kinematic tree.
-            vertices: A numpy array of vertex positions. Should have shape (V, 3).
-            faces: A numpy array of faces, where each face is represented by indices of
-                vertices. Should have shape (F, 3).
-            batched_wxyzs: Float array of shape (N, 4) for orientations.
-            batched_positions: Float array of shape (N, 3) for positions.
-            lod: LOD settings, either "off", "auto", or a tuple of (distance, ratio) pairs.
-            color: Color of the meshes as an RGB tuple.
-            wireframe: Boolean indicating if the meshes should be rendered as wireframes.
-            opacity: Opacity of the meshes. None means opaque.
-            material: Material type of the meshes ('standard', 'toon3', 'toon5').
-                This argument is ignored when wireframe=True.
-            flat_shading: Whether to do flat shading. This argument is ignored
-                when wireframe=True.
-            side: Side of the surface to render ('front', 'back', 'double').
-            wxyz: Quaternion rotation to parent frame from local frame (R_pl).
-            position: Translation from parent frame to local frame (t_pl).
-            visible: Whether or not these meshes are initially visible.
-            cast_shadow: Whether these meshes should cast shadows.
-            receive_shadow: Whether these meshes should receive shadows.
-
-        Returns:
-            Handle for manipulating scene node.
-        """
-        if wireframe and material != "standard":
-            warnings.warn(
-                f"Invalid combination of {wireframe=} and {material=}. Material argument will be ignored.",
-                stacklevel=2,
-            )
-        if wireframe and flat_shading:
-            warnings.warn(
-                f"Invalid combination of {wireframe=} and {flat_shading=}. Flat shading argument will be ignored.",
-                stacklevel=2,
-            )
-
-        batched_wxyzs = np.asarray(batched_wxyzs)
-        batched_positions = np.asarray(batched_positions)
-
-        num_instances = batched_wxyzs.shape[0]
-        assert batched_wxyzs.shape == (num_instances, 4)
-        assert batched_positions.shape == (num_instances, 3)
-
-        message = _messages.BatchedMeshesMessage(
-            name=name,
-            props=_messages.BatchedMeshesProps(
-                vertices=vertices.astype(np.float32),
-                faces=faces.astype(np.uint32),
-                batched_wxyzs=batched_wxyzs.astype(np.float32),
-                batched_positions=batched_positions.astype(np.float32),
-                color=_encode_rgb(color),
-                wireframe=wireframe,
-                opacity=opacity,
-                flat_shading=flat_shading,
-                side=side,
-                material=material,
-                lod=lod,
-                cast_shadow=cast_shadow,
-                receive_shadow=receive_shadow,
-            ),
-        )
-        return BatchedMeshHandle._make(self, message, name, wxyz, position, visible)
-
-    def add_batched_meshes_trimesh(
-        self,
-        name: str,
-        mesh: trimesh.Trimesh,
-        batched_wxyzs: tuple[tuple[float, float, float, float], ...] | np.ndarray,
-        batched_positions: tuple[tuple[float, float, float], ...] | np.ndarray,
-        lod: Literal["auto", "off"] | tuple[tuple[float, float], ...] = "auto",
-        scale: float = 1.0,
-        wxyz: tuple[float, float, float, float] | np.ndarray = (1.0, 0.0, 0.0, 0.0),
-        position: tuple[float, float, float] | np.ndarray = (0.0, 0.0, 0.0),
-        visible: bool = True,
-        cast_shadow: bool = True,
-        receive_shadow: bool = True,
-    ) -> BatchedGlbHandle:
-        """Add batched trimesh meshes to the scene.
-
-        Note:
-            Batched mesh instances are optimized for rendering many instances of the
-            same mesh. However, there are some limitations:
-            - Animations in the GLB file are not supported
-            - The node hierarchy from the GLB file is flattened
-            - Each mesh in the GLB is instanced separately
-
-        Args:
-            name: A scene tree name. Names in the format of /parent/child can be used to
-              define a kinematic tree.
-            mesh: A trimesh mesh object.
-            batched_wxyzs: Float array of shape (N, 4) for orientations.
-            batched_positions: Float array of shape (N, 3) for positions.
-            lod: LOD settings, either "off", "auto", or a tuple of (distance, ratio) pairs.
-            scale: A scale for resizing the mesh.
-            wxyz: Quaternion rotation to parent frame from local frame (R_pl).
-            position: Translation to parent frame from local frame (t_pl).
-            visible: Whether or not this scene node is initially visible.
-            cast_shadow: Whether these meshes should cast shadows.
-            receive_shadow: Whether these meshes should receive shadows.
-
-        Returns:
-            Handle for manipulating scene node.
-        """
-        batched_wxyzs = np.asarray(batched_wxyzs)
-        batched_positions = np.asarray(batched_positions)
-
-        num_instances = batched_wxyzs.shape[0]
-        assert batched_wxyzs.shape == (num_instances, 4)
-        assert batched_positions.shape == (num_instances, 3)
-
-        with io.BytesIO() as data_buffer:
-            mesh.export(data_buffer, file_type="glb")
-            glb_data = data_buffer.getvalue()
-            message = _messages.BatchedGlbMessage(
-                name=name,
-                props=_messages.BatchedGlbProps(
-                    glb_data=glb_data,
-                    scale=scale,
-                    batched_wxyzs=batched_wxyzs.astype(np.float32),
-                    batched_positions=batched_positions.astype(np.float32),
-                    lod=lod,
-                    cast_shadow=cast_shadow,
-                    receive_shadow=receive_shadow,
-                ),
-            )
-            return BatchedGlbHandle._make(self, message, name, wxyz, position, visible)
 
     def _add_gaussian_splats(self, *args, **kwargs) -> GaussianSplatHandle:
         """Backwards compatibility shim. Use `add_gaussian_splats()` instead."""
@@ -1708,8 +1494,6 @@ class SceneApi:
         wxyz: tuple[float, float, float, float] | np.ndarray = (1.0, 0.0, 0.0, 0.0),
         position: tuple[float, float, float] | np.ndarray = (0.0, 0.0, 0.0),
         visible: bool = True,
-        cast_shadow: bool = True,
-        receive_shadow: bool = True,
     ) -> ImageHandle:
         """Add a 2D image to the scene.
 
@@ -1724,8 +1508,6 @@ class SceneApi:
             wxyz: Quaternion rotation to parent frame from local frame (R_pl).
             position: Translation from parent frame to local frame (t_pl).
             visible: Whether or not this image is initially visible.
-            cast_shadow: Whether this image should cast shadows.
-            receive_shadow: Whether this image should receive shadows.
 
         Returns:
             Handle for manipulating scene node.
@@ -1740,8 +1522,6 @@ class SceneApi:
                 _data=binary,
                 render_width=render_width,
                 render_height=render_height,
-                cast_shadow=cast_shadow,
-                receive_shadow=receive_shadow,
             ),
         )
         handle = ImageHandle._make(self, message, name, wxyz, position, visible)
@@ -1755,6 +1535,7 @@ class SceneApi:
         scale: float = 1.0,
         line_width: float = 2.5,
         fixed: bool = False,
+        auto_transform: bool = True,
         active_axes: tuple[bool, bool, bool] = (True, True, True),
         disable_axes: bool = False,
         disable_sliders: bool = False,
@@ -1782,18 +1563,14 @@ class SceneApi:
             scale: Scale of the transform controls.
             line_width: Width of the lines used in the gizmo.
             fixed: Boolean indicating if the gizmo should be fixed in position.
-            active_axes: Tuple of booleans indicating active axes.
-            disable_axes: Boolean to disable axes interaction. These are used
-                for translation in the X, Y, or Z directions.
-            disable_sliders: Boolean to disable slider interaction. These are
-                used for translation on the XY, YZ, or XZ planes.
-            disable_rotations: Boolean to disable rotation interaction. These
-                are used for rotation around the X, Y, or Z axes.
+            auto_transform: Whether the transform should be applied automatically.
+            active_axes: tuple of booleans indicating active axes.
+            disable_axes: Boolean to disable axes interaction.
+            disable_sliders: Boolean to disable slider interaction.
+            disable_rotations: Boolean to disable rotation interaction.
             translation_limits: Limits for translation.
             rotation_limits: Limits for rotation.
-            depth_test: Boolean indicating if depth testing should be used when
-                rendering. Setting to False can be used to render the gizmo
-                event when occluded by other objects.
+            depth_test: Boolean indicating if depth testing should be used when rendering.
             opacity: Opacity of the gizmo.
             wxyz: Quaternion rotation to parent frame from local frame (R_pl).
             position: Translation from parent frame to local frame (t_pl).
@@ -1808,6 +1585,7 @@ class SceneApi:
                 scale=scale,
                 line_width=line_width,
                 fixed=fixed,
+                auto_transform=auto_transform,
                 active_axes=active_axes,
                 disable_axes=disable_axes,
                 disable_sliders=disable_sliders,

@@ -1,6 +1,6 @@
-"""Lighting and Shadows
+"""Lights
 
-Example adding lights and enabling shadow rendering.
+Visualize a mesh under different lighting conditions. To get the demo data, see `./assets/download_dragon_mesh.sh`.
 """
 
 import time
@@ -21,7 +21,6 @@ def main() -> None:
     vertices = mesh.vertices
     faces = mesh.faces
     print(f"Loaded mesh with {vertices.shape} vertices, {faces.shape} faces")
-    print(mesh)
 
     # Start Viser server with mesh.
     server = viser.ViserServer()
@@ -31,29 +30,19 @@ def main() -> None:
         vertices=vertices,
         faces=faces,
         wxyz=tf.SO3.from_x_radians(np.pi / 2).wxyz,
-        position=(0.0, 2.0, 0.0),
+        position=(0.0, 0.0, 0.0),
     )
     server.scene.add_mesh_trimesh(
         name="/trimesh",
         mesh=mesh,
         wxyz=tf.SO3.from_x_radians(np.pi / 2).wxyz,
-        position=(0.0, -2.0, 0.0),
-    )
-    server.scene.add_grid(
-        "grid",
-        width=20.0,
-        height=20.0,
-        position=np.array([0.0, 0.0, -2.0]),
+        position=(0.0, 5.0, 0.0),
     )
 
     # adding controls to custom lights in the scene
-    server.scene.add_transform_controls(
-        "/control0", position=(0.0, 10.0, 5.0), scale=2.0
-    )
+    server.scene.add_transform_controls("/control0", position=(0.0, 10.0, 5.0))
     server.scene.add_label("/control0/label", "Directional")
-    server.scene.add_transform_controls(
-        "/control1", position=(0.0, -5.0, 5.0), scale=2.0
-    )
+    server.scene.add_transform_controls("/control1", position=(0.0, -5.0, 5.0))
     server.scene.add_label("/control1/label", "Point")
 
     directional_light = server.scene.add_light_directional(
@@ -68,14 +57,7 @@ def main() -> None:
 
     # Create default light toggle.
     gui_default_lights = server.gui.add_checkbox("Default lights", initial_value=True)
-    gui_default_shadows = server.gui.add_checkbox(
-        "Default shadows", initial_value=False
-    )
-
     gui_default_lights.on_update(
-        lambda _: server.scene.enable_default_lights(gui_default_lights.value)
-    )
-    gui_default_shadows.on_update(
         lambda _: server.scene.enable_default_lights(gui_default_lights.value)
     )
 
@@ -157,7 +139,7 @@ def main() -> None:
             min=0.0,
             max=1.0,
             step=0.01,
-            initial_value=0.3,
+            initial_value=0.1,
         )
 
     def update_environment_map(_) -> None:

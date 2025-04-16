@@ -6,7 +6,11 @@ import { useInView } from "react-intersection-observer";
 
 import { Notifications } from "@mantine/notifications";
 
-import { Environment, PerformanceMonitor, Stats, Bvh } from "@react-three/drei";
+import {
+  Environment,
+  PerformanceMonitor,
+  Stats,
+} from "@react-three/drei";
 import * as THREE from "three";
 import { Canvas, useThree, useFrame } from "@react-three/fiber";
 
@@ -44,9 +48,8 @@ import { FrameSynchronizedMessageHandler } from "./MessageHandler";
 import { PlaybackFromFile } from "./FilePlayback";
 import { SplatRenderContext } from "./Splatting/GaussianSplats";
 import { BrowserWarning } from "./BrowserWarning";
-import { MacWindowWrapper } from "./MacWindowWrapper";
-import { CsmDirectionalLight } from "./CsmDirectionalLight";
-import { VISER_VERSION } from "./VersionInfo";
+
+THREE.ColorManagement.enabled = true;
 
 function ViewerRoot() {
   // What websocket server should we connect to?
@@ -118,8 +121,6 @@ function ViewerRoot() {
     }),
     canvas2dRef: React.useRef(null),
     skinnedMeshState: React.useRef({}),
-    // Global hover state tracking for cursor management
-    hoveredElementsCount: React.useRef(0),
   };
 
   // Set dark default if specified in URL.
@@ -162,17 +163,9 @@ function ViewerContents({ children }: { children: React.ReactNode }) {
           position="top-left"
           limit={10}
           containerWidth="20em"
-          withinPortal={false}
           styles={{
             root: {
               boxShadow: "0.1em 0 1em 0 rgba(0,0,0,0.1) !important",
-              position: "absolute",
-              top: "1em",
-              left: "1em",
-              pointerEvents: "none",
-            },
-            notification: {
-              pointerEvents: "all",
             },
           }}
         />
@@ -407,20 +400,17 @@ function ViewerCanvas({ children }: { children: React.ReactNode }) {
           // Release drag lock.
           pointerInfo.isDragging = false;
         }}
-        shadows
       >
-        <Bvh firstHitOnly>
-          {inView ? null : <DisableRender />}
-          <BackgroundImage />
-          <SceneContextSetter />
-          {memoizedCameraControls}
-          <SplatRenderContext>
-            <AdaptiveDpr />
-            {children}
-            <SceneNodeThreeObject name="" parent={null} />
-          </SplatRenderContext>
-          <DefaultLights />
-        </Bvh>
+        {inView ? null : <DisableRender />}
+        <BackgroundImage />
+        <SceneContextSetter />
+        {memoizedCameraControls}
+        <SplatRenderContext>
+          <AdaptiveDpr />
+          {children}
+          <SceneNodeThreeObject name="" parent={null} />
+        </SplatRenderContext>
+        <DefaultLights />
       </Canvas>
     </div>
   );
@@ -430,9 +420,6 @@ function DefaultLights() {
   const viewer = React.useContext(ViewerContext)!;
   const enableDefaultLights = viewer.useSceneTree(
     (state) => state.enableDefaultLights,
-  );
-  const enableDefaultLightsShadows = viewer.useSceneTree(
-    (state) => state.enableDefaultLightsShadows,
   );
   const environmentMap = viewer.useSceneTree((state) => state.environmentMap);
 
@@ -510,26 +497,18 @@ function DefaultLights() {
       />
     );
   }
-  // TODO: need to figure out lights
   if (enableDefaultLights)
     return (
       <>
-        <CsmDirectionalLight
-          fade={true}
-          lightIntensity={3.0}
-          position={[-0.2, 1.0, -0.2]} // Coming from above, slightly off-center
-          cascades={3}
+        <directionalLight
           color={0xffffff}
-          maxFar={20}
-          mode="practical"
-          shadowBias={-0.0001}
-          castShadow={enableDefaultLightsShadows}
+          intensity={2.0}
+          position={[0, 1, 0]}
         />
-        <CsmDirectionalLight
+        <directionalLight
           color={0xffffff}
-          lightIntensity={0.4}
-          position={[0, -1, 0]} // Light from below
-          castShadow={false /* Let's only cast a shadow from above. */}
+          intensity={0.4}
+          position={[0, -1, 0]}
         />
         {envMapNode}
       </>
@@ -708,12 +687,7 @@ function SceneContextSetter() {
 }
 
 export function Root() {
-  // Parse dummy window dimensions from URL if present
-  const searchParams = new URLSearchParams(window.location.search);
-  const dummyWindowParam = searchParams.get("dummyWindowDimensions");
-  const dummyWindowTitle =
-    searchParams.get("dummyWindowTitle") ?? "localhost:8080";
-  const content = (
+  return (
     <div
       style={{
         width: "100%",
@@ -726,23 +700,6 @@ export function Root() {
       <ViewerRoot />
     </div>
   );
-
-  // If dummy window dimensions are specified, wrap content in MacWindowWrapper
-  if (dummyWindowParam) {
-    const [width, height] = dummyWindowParam.split("x").map(Number);
-    if (!isNaN(width) && !isNaN(height)) {
-      return (
-        <MacWindowWrapper
-          title={dummyWindowTitle}
-          width={width}
-          height={height}
-        >
-          {content}
-        </MacWindowWrapper>
-      );
-    }
-  }
-  return content;
 }
 
 /** Logo. When clicked, opens an info modal. */
@@ -751,7 +708,7 @@ function ViserLogo() {
     useDisclosure(false);
   return (
     <>
-      <Tooltip label={`Viser ${VISER_VERSION}`}>
+      <Tooltip label="About Viser">
         <Box
           style={{
             position: "absolute",
@@ -763,7 +720,7 @@ function ViserLogo() {
           onClick={openAbout}
           title="About Viser"
         >
-          <Image src="./logo.svg" style={{ width: "2.5em", height: "auto" }} />
+          <Image src="/logo.svg" style={{ width: "2.5em", height: "auto" }} />
         </Box>
       </Tooltip>
       <Modal

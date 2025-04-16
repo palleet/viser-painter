@@ -23,7 +23,6 @@ See here for download instructions:
         from pathlib import Path
 
         import numpy as np
-        import trimesh
         import tyro
 
         import viser
@@ -86,7 +85,7 @@ See here for download instructions:
         def main(model_path: Path) -> None:
             server = viser.ViserServer()
             server.scene.set_up_direction("+y")
-            server.scene.add_grid("/grid", position=(0.0, -1.3, 0.0), plane="xz")
+            server.gui.configure_theme(control_layout="collapsible")
 
             # Main loop. We'll read pose/shape from the GUI elements, compute the mesh,
             # and then send the updated mesh in a loop.
@@ -104,12 +103,6 @@ See here for download instructions:
                 wireframe=gui_elements.gui_wireframe.value,
                 color=gui_elements.gui_rgb.value,
             )
-
-            # Add a vertex selector to the mesh. This will allow us to click on
-            # vertices to get indices.
-            red_sphere = trimesh.creation.icosphere(radius=0.001, subdivisions=1)
-            red_sphere.visual.vertex_colors = (255, 0, 0, 255)  # type: ignore
-
             while True:
                 # Do nothing if no change.
                 time.sleep(0.02)

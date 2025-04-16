@@ -24,9 +24,6 @@ from typing_extensions import Literal, assert_never, override
 from websockets import Headers
 from websockets.asyncio.server import ServerConnection
 from websockets.http11 import Request, Response
-from websockets.typing import Subprotocol
-
-import viser  # Import for version checking
 
 from ._async_message_buffer import AsyncMessageBuffer
 from ._messages import Message
@@ -84,6 +81,7 @@ class StateSerializer:
         assert self._handler._record_handle is not None, (
             "serialize() was already called!"
         )
+        import viser
 
         packed_bytes = msgspec.msgpack.encode(
             {
@@ -301,10 +299,7 @@ class WebsockServer(WebsockMessageHandler):
     def flush_client(self, client_id: int) -> None:
         """Flush the outgoing message buffer for a particular client. Any buffered
         messages will immediately be sent. (by default they are windowed)"""
-        # No-op if client is disconnected.
-        client_state = self._client_state_from_id.get(client_id)
-        if client_state is not None:
-            client_state.message_buffer.flush()
+        self._client_state_from_id[client_id].message_buffer.flush()
 
     def _background_worker(self, ready_sem: threading.Semaphore) -> None:
         host = self._host
@@ -336,27 +331,6 @@ class WebsockServer(WebsockMessageHandler):
 
                 nonlocal total_connections
                 total_connections += 1
-
-            # Version check to make sure Viser server/client match.
-            if self._client_api_version == 1:
-                import viser
-
-                # Extract client version from the selected subprotocol.
-                client_version_str = "unknown"
-                if connection.subprotocol is not None:
-                    if connection.subprotocol.startswith("viser-v"):
-                        client_version_str = connection.subprotocol[7:].strip()
-
-                if client_version_str != viser.__version__:
-                    rich.print(
-                        f"[bold red](viser)[/bold red] Version mismatch - connection rejected. "
-                        f"Client: '{client_version_str}', Server: '{viser.__version__}'"
-                    )
-                    await connection.close(
-                        1002,
-                        f"Version mismatch. Client: {client_version_str}, Server: {viser.__version__}",
-                    )
-                    return  # Exit handler to prevent further processing.
 
             client_state = _ClientHandleState(
                 AsyncMessageBuffer(event_loop, persistent_messages=False),
@@ -503,9 +477,13 @@ class WebsockServer(WebsockMessageHandler):
             if mime_type is None:
                 mime_type = "application/octet-stream"
 
+            response_headers = {
+                "Content-Type": mime_type,
+            }
             if source_path not in file_cache:
                 file_cache[source_path] = source_path.read_bytes()
             if use_gzip:
+                response_headers["Content-Encoding"] = "gzip"
                 if source_path not in file_cache_gzipped:
                     file_cache_gzipped[source_path] = gzip.compress(
                         file_cache[source_path]
@@ -513,12 +491,6 @@ class WebsockServer(WebsockMessageHandler):
                 response_payload = file_cache_gzipped[source_path]
             else:
                 response_payload = file_cache[source_path]
-
-            response_headers = {
-                "Content-Type": mime_type,
-                "Content-Length": str(len(response_payload)),
-                "Content-Encoding": "gzip" if use_gzip else "identity",
-            }
 
             # Try to read + send over file.
             return Response(
@@ -541,18 +513,6 @@ class WebsockServer(WebsockMessageHandler):
                         compression=None,
                         process_request=(
                             viser_http_server if http_server_root is not None else None
-                        ),
-                        # Accept connections with version-based protocol and extract version in handler.
-                        subprotocols=None,
-                        select_subprotocol=lambda _, subprotocols: (
-                            next(
-                                (
-                                    Subprotocol(p)
-                                    for p in subprotocols
-                                    if p.startswith("viser-v")
-                                ),
-                                None,
-                            )
                         ),
                     ) as serve_future:
                         assert serve_future.server is not None

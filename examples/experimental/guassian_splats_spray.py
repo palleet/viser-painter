@@ -105,9 +105,11 @@ def load_ply_file(ply_file_path: Path, center: bool = False) -> SplatFile:
     }
 
 
-def main(splat_paths: tuple[Path, ...]) -> None:
+def main(splat_paths: tuple[Path, ...] = ()) -> None:
     server = viser.ViserServer()
     server.gui.configure_theme(dark_mode=True)
+    print("Server running at http://localhost:8080")
+
     gui_reset_up = server.gui.add_button(
         "Reset up direction",
         hint="Set the camera control 'up' direction to the current camera's 'up'.",
@@ -116,60 +118,60 @@ def main(splat_paths: tuple[Path, ...]) -> None:
     @gui_reset_up.on_click
     def _(event: viser.GuiEvent) -> None:
         client = event.client
-        assert client is not None
-        client.camera.up_direction = tf.SO3(client.camera.wxyz) @ np.array(
-            [0.0, -1.0, 0.0]
+        if client is not None:
+            client.camera.up_direction = tf.SO3(client.camera.wxyz) @ np.array([0.0, -1.0, 0.0])
+
+    if len(splat_paths) == 0:
+        # Show empty scene with one interactive Gaussian as placeholder
+        center = np.array([[0.0, 0.0, 0.0]])
+        red = np.array([[1.0, 0.0, 0.0]])
+        green = np.array([[0.0, 1.0, 0.0]])
+        opacity = np.array([[1.0]])
+        covariance = np.array([np.eye(3) * 0.01])
+
+        gs_handle = server.scene.add_gaussian_splats(
+            "/manual/gaussian",
+            centers=center,
+            rgbs=red.copy(),
+            opacities=opacity,
+            covariances=covariance,
         )
 
-    # ---- Add single manual Gaussian ----
-    center = np.array([[0.0, 0.0, 0.0]])
-    red = np.array([[1.0, 0.0, 0.0]])
-    green = np.array([[0.0, 1.0, 0.0]])
-    opacity = np.array([[1.0]])
-    covariance = np.array([np.eye(3) * 0.01])
+        # color_state = {"highlighted": False}
 
-    gs_handle = server.scene.add_gaussian_splats(
-        "/manual/gaussian",
-        centers=center,
-        rgbs=red.copy(),
-        opacities=opacity,
-        covariances=covariance,
-    )
+        # @server.scene.on_pointer_event("click")
+        # def handle_click(event: viser.ScenePointerEvent) -> None:
+        #     dist = np.linalg.norm(event.position - center[0])
+        #     if dist < 0.1:
+        #         color_state["highlighted"] = not color_state["highlighted"]
+        #         gs_handle.update(rgbs=green if color_state["highlighted"] else red)
+        #         print("Toggled manual Gaussian color")
+        
+    else:
+        # Load splats from files
+        for i, splat_path in enumerate(splat_paths):
+            if splat_path.suffix == ".splat":
+                splat_data = load_splat_file(splat_path, center=True)
+            elif splat_path.suffix == ".ply":
+                splat_data = load_ply_file(splat_path, center=True)
+            else:
+                raise SystemExit("Please provide a .splat or .ply file.")
 
-    color_state = {"highlighted": False}
+            server.scene.add_transform_controls(f"/{i}")
+            gs_handle = server.scene.add_gaussian_splats(
+                f"/{i}/gaussian_splats",
+                centers=splat_data["centers"],
+                rgbs=splat_data["rgbs"],
+                opacities=splat_data["opacities"],
+                covariances=splat_data["covariances"],
+            )
 
-    @server.scene.on_pointer_event("click")
-    def handle_click(event: viser.ScenePointerEvent) -> None:
-        dist = np.linalg.norm(event.position - center[0])
-        if dist < 0.1:
-            color_state["highlighted"] = not color_state["highlighted"]
-            gs_handle.update(rgbs=green if color_state["highlighted"] else red)
-            print("Toggled manual Gaussian color")
+            remove_button = server.gui.add_button(f"Remove splat object {i}")
 
-    # loads guassian from file
-    # for i, splat_path in enumerate(splat_paths):
-    #     if splat_path.suffix == ".splat":
-    #         splat_data = load_splat_file(splat_path, center=True)
-    #     elif splat_path.suffix == ".ply":
-    #         splat_data = load_ply_file(splat_path, center=True)
-    #     else:
-    #         raise SystemExit("Please provide a filepath to a .splat or .ply file.")
-
-    #     server.scene.add_transform_controls(f"/{i}")
-    #     gs_handle = server.scene.add_gaussian_splats(
-    #         f"/{i}/gaussian_splats",
-    #         centers=splat_data["centers"],
-    #         rgbs=splat_data["rgbs"],
-    #         opacities=splat_data["opacities"],
-    #         covariances=splat_data["covariances"],
-    #     )
-
-    # remove_button = server.gui.add_button(f"Remove splat object {i}")
-
-    # @remove_button.on_click
-    # def _(_, gs_handle=gs_handle, remove_button=remove_button) -> None:
-    #     gs_handle.remove()
-    #     remove_button.remove()
+            @remove_button.on_click
+            def _(_, gs_handle=gs_handle, remove_button=remove_button) -> None:
+                gs_handle.remove()
+                remove_button.remove()
 
     while True:
         time.sleep(10.0)

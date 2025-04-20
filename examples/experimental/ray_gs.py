@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import colorsys
+import random
 
 import time
 from pathlib import Path
@@ -203,7 +204,7 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
             raise SystemExit("Please provide a filepath to a .splat or .ply file.")
 
 
-        server.scene.add_transform_controls(f"/{i}")
+        # server.scene.add_transform_controls(f"/{i}")
         gs_handle = server.scene.add_gaussian_splats(
             f"/{i}/gaussian_splats",
             centers=splat_data["centers"],
@@ -240,10 +241,49 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
                 curr_hsv = colorsys.rgb_to_hsv(rgb[0], rgb[1], rgb[2])
 
                 # Map normalized position to HSV
-                hue = normalized_pos[0]  # Use x-coordinate for hue
+                hue = ((normalized_pos[0] + normalized_pos[1] + normalized_pos[2]) * 3.0) % 1.0
                 saturation = curr_hsv[1]         # vibrancy
                 value = curr_hsv[2]              # brightness
-                hsv_color = [hue, saturation, value]
+
+                # Convert HSV to RGB
+                splat_data["rgbs"][i] = colorsys.hsv_to_rgb(hue, saturation, value)
+            
+            gs_handle.remove()
+            new_gs_handle = server.scene.add_gaussian_splats(
+                f"/{i}/gaussian_splats",
+                centers=splat_data["centers"],
+                rgbs=splat_data["rgbs"],
+                opacities=splat_data["opacities"],
+                covariances=splat_data["covariances"],
+            )
+            gs_handle = new_gs_handle
+        
+        paint_splats_random_button_handle = server.gui.add_button("Paint all random", icon=viser.Icon.PAINT)
+        @paint_splats_random_button_handle.on_click
+        def _(_, gs_handle=gs_handle):
+            print("Print all pressed!")
+            centers = splat_data["centers"]
+
+            # Calculate the bounding box of the centers
+            min_xyz = centers.min(axis=0)  # [min_x, min_y, min_z]
+            max_xyz = centers.max(axis=0)  # [max_x, max_y, max_z]
+            range_xyz = max_xyz - min_xyz  # Range for normalization
+
+            rand_hue = random.random()
+
+            for i, rgb in enumerate(splat_data["rgbs"]):
+                curr_center = splat_data["centers"][i]
+
+                # Normalize the position to [0, 1]
+                normalized_pos = (curr_center - min_xyz) / range_xyz
+
+                # convert current rgb values to HSV
+                curr_hsv = colorsys.rgb_to_hsv(rgb[0], rgb[1], rgb[2])
+
+                # Map normalized position to HSV
+                hue = rand_hue
+                saturation = curr_hsv[1]         # vibrancy
+                value = curr_hsv[2]              # brightness
 
                 # Convert HSV to RGB
                 splat_data["rgbs"][i] = colorsys.hsv_to_rgb(hue, saturation, value)

@@ -172,6 +172,10 @@ class SceneApi:
             self._handle_scene_pointer_updates,
         )
 
+        # gaussian painter code:
+        self._gaussian_splats: dict[str, GaussianSplatHandle] = {}
+        """Dictionary to store Gaussian splats by their names."""
+
     def set_up_direction(
         self,
         direction: Literal["+x", "+y", "+z", "-x", "-y", "-z"]
@@ -1316,6 +1320,7 @@ class SceneApi:
         Returns:
             Scene node handle.
         """
+        print("Gaussian named {0} added".format(name))
         num_gaussians = centers.shape[0]
         assert centers.shape == (num_gaussians, 3)
         assert rgbs.shape == (num_gaussians, 3)
@@ -1351,7 +1356,72 @@ class SceneApi:
         node_handle = GaussianSplatHandle._make(
             self, message, name, wxyz, position, visible
         )
+        self._gaussian_splats[name] = node_handle
         return node_handle
+    
+    def get_gaussian_splats(self) -> dict[str, GaussianSplatHandle]:
+        """Retrieve all Gaussian splats in the scene.
+
+        Returns:
+            A dictionary of Gaussian splat handles, keyed by their names.
+        """
+        return self._gaussian_splats
+    
+    def update_gaussian_splats(
+        self,
+        name: str,
+        centers: np.ndarray | None = None,
+        covariances: np.ndarray | None = None,
+        rgbs: np.ndarray | None = None,
+        opacities: np.ndarray | None = None,
+    ) -> None:
+        """Update the properties of an existing Gaussian splat.
+
+        Args:
+            name: Name of the Gaussian splat to update.
+            centers: Updated centers of Gaussians. (N, 3).
+            covariances: Updated second moment for each Gaussian. (N, 3, 3).
+            rgbs: Updated colors for each Gaussian. (N, 3).
+            opacities: Updated opacities for each Gaussian. (N, 1).
+
+        Raises:
+            KeyError: If the Gaussian splat with the given name does not exist.
+        """
+        if name not in self._gaussian_splats:
+            raise KeyError(f"Gaussian splat with name '{name}' does not exist.")
+        
+
+        handle = self._gaussian_splats[name]
+
+        # Retrieve the current buffer and update the relevant fields.
+        buffer = handle._impl.props.buffer.copy()
+
+        num_gaussians = buffer.shape[0]
+        print("num of gaussians is {0}".format(num_gaussians))
+        if centers is not None:
+            assert centers.shape == (num_gaussians, 3)
+            buffer[:, :3] = centers.astype(np.float32).view(np.uint8)
+
+        if covariances is not None:
+            assert covariances.shape == (num_gaussians, 3, 3)
+            cov_triu = covariances.reshape((-1, 9))[:, np.array([0, 1, 2, 4, 5, 8])]
+            buffer[:, 4:7] = cov_triu.astype(np.float16).view(np.uint8)
+
+        if rgbs is not None:
+            assert rgbs.shape == (num_gaussians, 3)
+            buffer[:, 7:10] = colors_to_uint8(rgbs)
+
+        if opacities is not None:
+            assert opacities.shape == (num_gaussians, 1)
+            buffer[:, 10:11] = colors_to_uint8(opacities)
+
+        # Send the updated buffer to the renderer.
+        self._websock_interface.queue_message(
+            _messages.UpdateGaussianSplatsMessage(
+                name=name,
+                props=_messages.GaussianSplatsProps(buffer=buffer),
+            )
+        )
 
     def add_box(
         self,

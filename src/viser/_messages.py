@@ -1313,6 +1313,15 @@ class GaussianSplatsProps:
 
     Where cov1-6 are the upper-triangular terms of covariance matrices."""
 
+@dataclasses.dataclass
+class UpdateGaussianSplatsMessage(Message):
+    """Message from server->client to update properties of Gaussian splats."""
+
+    name: str
+    """Name of the Gaussian splat to update."""
+    props: GaussianSplatsProps
+    """Updated properties of the Gaussian splat."""
+
 
 @dataclasses.dataclass
 class GetRenderRequestMessage(Message):

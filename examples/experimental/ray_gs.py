@@ -121,25 +121,25 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
             [0.0, -1.0, 0.0]
         )
 
-    if not splat_paths:
-        # load one guassian
-        # Instead of loading from file, define one Gaussian manually:
-        center = np.array([[0.0, 0.0, 0.0]])  # Shape: (1, 3)
-        rgb = np.array([[1.0, 0.0, 0.0]])     # Red, Shape: (1, 3)
-        opacity = np.array([[1.0]])          # Fully opaque, Shape: (1, 1)
+    # if not splat_paths:
+    #     # load one guassian
+    #     # Instead of loading from file, define one Gaussian manually:
+    #     center = np.array([[0.0, 0.0, 0.0]])  # Shape: (1, 3)
+    #     rgb = np.array([[1.0, 0.0, 0.0]])     # Red, Shape: (1, 3)
+    #     opacity = np.array([[1.0]])          # Fully opaque, Shape: (1, 1)
 
-        # Define a simple isotropic covariance (sphere shape)
-        scale = 0.1
-        covariance = np.array([np.eye(3) * scale**2])  # Shape: (1, 3, 3)
+    #     # Define a simple isotropic covariance (sphere shape)
+    #     scale = 0.1
+    #     covariance = np.array([np.eye(3) * scale**2])  # Shape: (1, 3, 3)
 
-        # Now render that single Gaussian
-        server.scene.add_gaussian_splats(
-            "/0/gaussian_splat",
-            centers=center,
-            rgbs=rgb,
-            opacities=opacity,
-            covariances=covariance,
-        )
+    #     # Now render that single Gaussian
+    #     server.scene.add_gaussian_splats(
+    #         "/0/gaussian_splat",
+    #         centers=center,
+    #         rgbs=rgb,
+    #         opacities=opacity,
+    #         covariances=covariance,
+    #     )
 
     for i, splat_path in enumerate(splat_paths):
         if splat_path.suffix == ".splat":
@@ -147,7 +147,14 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
         elif splat_path.suffix == ".ply":
             splat_data = load_ply_file(splat_path, center=True)
         else:
-            raise SystemExit("Please provide a filepath to a .splat or .ply file.")
+            # raise SystemExit("Please provide a filepath to a .splat or .ply file.")
+            splat_data = {}
+            splat_data["centers"] = np.array([[0.0, 0.0, 0.0]])
+            splat_data["rgbs"] = np.array([[1.0, 0.0, 0.0]])
+            splat_data["opacities"] = np.array([[1.0]])
+            scale = 0.1
+            splat_data["covariances"] = np.array([np.eye(3) * scale**2])
+
 
         server.scene.add_transform_controls(f"/{i}")
         gs_handle = server.scene.add_gaussian_splats(
@@ -164,7 +171,42 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
         def _(_, gs_handle=gs_handle, remove_button=remove_button) -> None:
             gs_handle.remove()
             remove_button.remove()
+    
+    paint_all_button_handle = server.gui.add_button("Paint all splats", icon=viser.Icon.PAINT)
 
+    @paint_all_button_handle.on_click
+    def _(_):
+        print("Print all pressed!")
+        server.scene.update_gaussian_splats("/0/gaussian_splat", rgbs=np.array([[1.0, 0.0, 0.0]]),)
+
+
+
+    paint_button_handle = server.gui.add_button("Paint splats", icon=viser.Icon.PAINT)
+
+    @paint_button_handle.on_click
+    def _(_):
+        paint_button_handle.disabled = True
+
+        @server.scene.on_pointer_event(event_type="rect-select")
+        def _(message: viser.ScenePointerEvent) -> None:
+            server.scene.remove_pointer_callback()
+
+            camera = message.client.camera
+
+            (x0, y0), (x1, y1) = message.screen_pos
+            screen_corners = [
+                (x0, y0),
+                (x1, y0),
+                (x1, y1),
+                (x0, y1)
+            ]
+
+            print("Corners are {0}".format(screen_corners));
+            
+
+        @server.scene.on_pointer_callback_removed
+        def _():
+            paint_button_handle.disabled = False
 
     while True:
         time.sleep(10.0)

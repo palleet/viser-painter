@@ -216,6 +216,31 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
         def _(_, gs_handle=gs_handle, remove_button=remove_button) -> None:
             gs_handle.remove()
             remove_button.remove()
+        
+        paint_all_button_handle = server.gui.add_button("Paint all splats", icon=viser.Icon.PAINT)
+        @paint_all_button_handle.on_click
+        def _(_, gs_handle=gs_handle):
+            print("Print all pressed!")
+            print("Paint all pressed!")
+            splat_data["rgbs"][:] = np.array([1.0, 0.0, 1.0]) 
+            
+            centers = splat_data["centers"]
+
+            min_xyz = centers.min(axis=0)  # [min_x, min_y, min_z]
+            max_xyz = centers.max(axis=0)  # [max_x, max_y, max_z]
+
+            print("Min (x, y, z):", min_xyz)
+            print("Max (x, y, z):", max_xyz)
+            
+            gs_handle.remove()
+            new_gs_handle = server.scene.add_gaussian_splats(
+                f"/{i}/gaussian_splats",
+                centers=splat_data["centers"],
+                rgbs=splat_data["rgbs"],
+                opacities=splat_data["opacities"],
+                covariances=splat_data["covariances"],
+            )
+            gs_handle = new_gs_handle
     
 
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import colorsys
+
 import time
 from pathlib import Path
 from typing import TypedDict
@@ -221,16 +223,27 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
         @paint_all_button_handle.on_click
         def _(_, gs_handle=gs_handle):
             print("Print all pressed!")
-            print("Paint all pressed!")
-            splat_data["rgbs"][:] = np.array([1.0, 0.0, 1.0]) 
-            
             centers = splat_data["centers"]
 
+            # Calculate the bounding box of the centers
             min_xyz = centers.min(axis=0)  # [min_x, min_y, min_z]
             max_xyz = centers.max(axis=0)  # [max_x, max_y, max_z]
+            range_xyz = max_xyz - min_xyz  # Range for normalization
 
-            print("Min (x, y, z):", min_xyz)
-            print("Max (x, y, z):", max_xyz)
+            for i, rgb in enumerate(splat_data["rgbs"]):
+                curr_center = splat_data["centers"][i]
+
+                # Normalize the position to [0, 1]
+                normalized_pos = (curr_center - min_xyz) / range_xyz
+
+                # Map normalized position to HSV
+                hue = normalized_pos[0]  # Use x-coordinate for hue
+                saturation = 1.0         # vibrancy
+                value = 1.0              # brightness
+                hsv_color = [hue, saturation, value]
+
+                # Convert HSV to RGB
+                splat_data["rgbs"][i] = colorsys.hsv_to_rgb(hsv_color[0], hsv_color[1], hsv_color[2])
             
             gs_handle.remove()
             new_gs_handle = server.scene.add_gaussian_splats(

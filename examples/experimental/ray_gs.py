@@ -122,24 +122,75 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
         )
 
     if not splat_paths:
-        # load one guassian
-        # Instead of loading from file, define one Gaussian manually:
-        center = np.array([[0.0, 0.0, 0.0]])  # Shape: (1, 3)
-        rgb = np.array([[1.0, 0.0, 0.0]])     # Red, Shape: (1, 3)
-        opacity = np.array([[1.0]])          # Fully opaque, Shape: (1, 1)
-
-        # Define a simple isotropic covariance (sphere shape)
+        print("Red splat loaded...")
         scale = 0.1
-        covariance = np.array([np.eye(3) * scale**2])  # Shape: (1, 3, 3)
-
-        # Now render that single Gaussian
-        server.scene.add_gaussian_splats(
-            "/0/gaussian_splat",
-            centers=center,
-            rgbs=rgb,
-            opacities=opacity,
-            covariances=covariance,
+        splat_data: SplatFile = {
+            "centers": np.array([[0.0, 0.0, 0.0]], dtype=np.float32),
+            "rgbs": np.array([[1.0, 0.0, 0.0]], dtype=np.float32),
+            "opacities": np.array([[1.0]], dtype=np.float32),
+            "covariances": np.array([np.eye(3, dtype=np.float32) * scale**2], dtype=np.float32),
+        }
+        for rgb in splat_data["rgbs"]:
+            print(rgb)  # This will print something like [1. 0. 0.]
+        server.scene.add_transform_controls(f"/0")
+        gs_handle = server.scene.add_gaussian_splats(
+            f"/0/gaussian_splats",
+            centers=splat_data["centers"],
+            rgbs=splat_data["rgbs"],
+            opacities=splat_data["opacities"],
+            covariances=splat_data["covariances"],
         )
+
+        remove_button = server.gui.add_button(f"Remove splat object 0")
+
+        @remove_button.on_click
+        def _(_, gs_handle=gs_handle, remove_button=remove_button) -> None:
+            gs_handle.remove()
+            remove_button.remove()
+
+        paint_all_button_handle = server.gui.add_button("Paint all splats", icon=viser.Icon.PAINT)
+        @paint_all_button_handle.on_click
+        def _(_, gs_handle=gs_handle):
+            print("Print all pressed!")
+            for rgb in splat_data["rgbs"]:
+                splat_data["rgbs"][:] = np.array([1.0, 0.0, 1.0])
+            for rgb in splat_data["rgbs"]:
+                print(rgb)  # This will print something like [1. 0. 0.]
+            
+            gs_handle.remove()
+            gs_handle = server.scene.add_gaussian_splats(
+                f"/0/gaussian_splats",
+                centers=splat_data["centers"],
+                rgbs=splat_data["rgbs"],
+                opacities=splat_data["opacities"],
+                covariances=splat_data["covariances"],
+            )
+
+        paint_button_handle = server.gui.add_button("Paint splats", icon=viser.Icon.PAINT)
+        @paint_button_handle.on_click
+        def _(_):
+            paint_button_handle.disabled = True
+
+            @server.scene.on_pointer_event(event_type="rect-select")
+            def _(message: viser.ScenePointerEvent) -> None:
+                server.scene.remove_pointer_callback()
+
+                camera = message.client.camera
+
+                (x0, y0), (x1, y1) = message.screen_pos
+                screen_corners = [
+                    (x0, y0),
+                    (x1, y0),
+                    (x1, y1),
+                    (x0, y1)
+                ]
+
+                print("Corners are {0}".format(screen_corners));
+                
+
+            @server.scene.on_pointer_callback_removed
+            def _():
+                paint_button_handle.disabled = False
 
     for i, splat_path in enumerate(splat_paths):
         if splat_path.suffix == ".splat":
@@ -148,6 +199,7 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
             splat_data = load_ply_file(splat_path, center=True)
         else:
             raise SystemExit("Please provide a filepath to a .splat or .ply file.")
+
 
         server.scene.add_transform_controls(f"/{i}")
         gs_handle = server.scene.add_gaussian_splats(
@@ -164,6 +216,7 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
         def _(_, gs_handle=gs_handle, remove_button=remove_button) -> None:
             gs_handle.remove()
             remove_button.remove()
+    
 
 
     while True:

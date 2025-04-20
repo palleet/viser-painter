@@ -236,14 +236,17 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
                 # Normalize the position to [0, 1]
                 normalized_pos = (curr_center - min_xyz) / range_xyz
 
+                # convert current rgb values to HSV
+                curr_hsv = colorsys.rgb_to_hsv(rgb[0], rgb[1], rgb[2])
+
                 # Map normalized position to HSV
                 hue = normalized_pos[0]  # Use x-coordinate for hue
-                saturation = 1.0         # vibrancy
-                value = 1.0              # brightness
+                saturation = curr_hsv[1]         # vibrancy
+                value = curr_hsv[2]              # brightness
                 hsv_color = [hue, saturation, value]
 
                 # Convert HSV to RGB
-                splat_data["rgbs"][i] = colorsys.hsv_to_rgb(hsv_color[0], hsv_color[1], hsv_color[2])
+                splat_data["rgbs"][i] = colorsys.hsv_to_rgb(hue, saturation, value)
             
             gs_handle.remove()
             new_gs_handle = server.scene.add_gaussian_splats(

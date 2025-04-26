@@ -249,6 +249,8 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
         def _(_, gs_handle=gs_handle, remove_button=remove_button) -> None:
             gs_handle.remove()
             remove_button.remove()
+
+        rgb_button_handle = server.gui.add_rgb("Color picker", (0, 0, 0))
         
         reset_scene_color_button_handle = server.gui.add_button("Reset scene colors", icon=viser.Icon.RESTORE)
         @reset_scene_color_button_handle.on_click
@@ -266,11 +268,12 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
 
         paint_selection_button_handle = server.gui.add_button("Paint selection", icon=viser.Icon.PAINT)
         @paint_selection_button_handle.on_click
-        def _(_, gs_handle=gs_handle):
+        def _(_, gs_handle=gs_handle, rgb_button_handle=rgb_button_handle):
             paint_selection_button_handle.disabled = True
 
             @server.scene.on_pointer_event(event_type="rect-select")
-            def _(message: viser.ScenePointerEvent, gs_handle=gs_handle) -> None:
+            def _(message: viser.ScenePointerEvent, gs_handle=gs_handle, rgb_button_handle=rgb_button_handle) -> None:
+                print("Selected color is {0}", rgb_button_handle.value)
                 server.scene.remove_pointer_callback()
 
                 camera = message.client.camera
@@ -301,7 +304,10 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
                 )
 
                 # Update colors of select splats
-                splat_data["rgbs"][mask] = np.array([1, 0.0, 1]) # Paint
+                r = rgb_button_handle.value[0] / 255.0
+                g = rgb_button_handle.value[1] / 255.0
+                b = rgb_button_handle.value[2] / 255.0
+                splat_data["rgbs"][mask] = np.array([r, g, b]) # Paint
 
                 # Update splat by remove and creating new scene with updated colors
                 gs_handle.remove()

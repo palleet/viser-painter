@@ -170,31 +170,59 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
                 covariances=splat_data["covariances"],
             )
 
-        paint_button_handle = server.gui.add_button("Paint splats", icon=viser.Icon.PAINT)
-        @paint_button_handle.on_click
-        def _(_):
-            paint_button_handle.disabled = True
+        paint_selection_button_handle = server.gui.add_button("Paint selection", icon=viser.Icon.PAINT)
+        @paint_selection_button_handle.on_click
+        def _(_, gs_handle=gs_handle):
+            paint_selection_button_handle.disabled = True
 
             @server.scene.on_pointer_event(event_type="rect-select")
-            def _(message: viser.ScenePointerEvent) -> None:
+            def _(message: viser.ScenePointerEvent, gs_handle=gs_handle) -> None:
                 server.scene.remove_pointer_callback()
 
                 camera = message.client.camera
 
-                (x0, y0), (x1, y1) = message.screen_pos
-                screen_corners = [
-                    (x0, y0),
-                    (x1, y0),
-                    (x1, y1),
-                    (x0, y1)
-                ]
+                # Transform splat centers into the camera frame
+                R_camera_world = tf.SE3.from_rotation_and_translation(
+                    tf.SO3(camera.wxyz), camera.position
+                ).inverse()
+                centers_camera_frame = (
+                    R_camera_world.as_matrix()
+                    @ np.hstack([splat_data["centers"], np.ones((splat_data["centers"].shape[0], 1))]).T
+                ).T[:, :3]
 
-                print("Corners are {0}".format(screen_corners));
+                # Project the centers onto the image plane
+                fov, aspect = camera.fov, camera.aspect
+                centers_proj = centers_camera_frame[:, :2] / centers_camera_frame[:, 2].reshape(-1, 1)
+                centers_proj /= np.tan(fov / 2)
+                centers_proj[:, 0] /= aspect
+
+                # Normalize to [0, 1] range
+                centers_proj = (1 + centers_proj) / 2
+
+                # Check which centers are inside the selected rectangle
+                (x0, y0), (x1, y1) = message.screen_pos
+                mask = (
+                    (centers_proj[:, 0] >= x0) & (centers_proj[:, 0] <= x1) &
+                    (centers_proj[:, 1] >= y0) & (centers_proj[:, 1] <= y1)
+                )
+
+                # Update the colors of the selected splats
+                splat_data["rgbs"][mask] = np.array([0.5, 0.0, 0.7])  # Example color: purple
+
+                # Re-render the splats with updated colors
+                gs_handle.remove()
+                gs_handle = server.scene.add_gaussian_splats(
+                    f"/0/gaussian_splats",
+                    centers=splat_data["centers"],
+                    rgbs=splat_data["rgbs"],
+                    opacities=splat_data["opacities"],
+                    covariances=splat_data["covariances"],
+                )
                 
 
             @server.scene.on_pointer_callback_removed
             def _():
-                paint_button_handle.disabled = False
+                paint_selection_button_handle.disabled = False
 
     for i, splat_path in enumerate(splat_paths):
         if splat_path.suffix == ".splat":
@@ -235,6 +263,60 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
                 covariances=original_splat_data["covariances"],
             )
             gs_handle = new_gs_handle
+
+        paint_selection_button_handle = server.gui.add_button("Paint selection", icon=viser.Icon.PAINT)
+        @paint_selection_button_handle.on_click
+        def _(_, gs_handle=gs_handle):
+            paint_selection_button_handle.disabled = True
+
+            @server.scene.on_pointer_event(event_type="rect-select")
+            def _(message: viser.ScenePointerEvent, gs_handle=gs_handle) -> None:
+                server.scene.remove_pointer_callback()
+
+                camera = message.client.camera
+
+                # Code modified from 20_scene_pointer.py
+                R_camera_world = tf.SE3.from_rotation_and_translation(
+                    tf.SO3(camera.wxyz), camera.position
+                ).inverse()
+                centers_camera_frame = (
+                    R_camera_world.as_matrix()
+                    @ np.hstack([splat_data["centers"], np.ones((splat_data["centers"].shape[0], 1))]).T
+                ).T[:, :3]
+
+                # Project the centers onto the image plane
+                fov, aspect = camera.fov, camera.aspect
+                centers_proj = centers_camera_frame[:, :2] / centers_camera_frame[:, 2].reshape(-1, 1)
+                centers_proj /= np.tan(fov / 2)
+                centers_proj[:, 0] /= aspect
+
+                # Normalize to [0, 1] range
+                centers_proj = (1 + centers_proj) / 2
+
+                # Check which centers are inside the selected rectangle
+                (x0, y0), (x1, y1) = message.screen_pos
+                mask = (
+                    (centers_proj[:, 0] >= x0) & (centers_proj[:, 0] <= x1) &
+                    (centers_proj[:, 1] >= y0) & (centers_proj[:, 1] <= y1)
+                )
+
+                # Update colors of select splats
+                splat_data["rgbs"][mask] = np.array([1, 0.0, 1]) # Paint
+
+                # Update splat by remove and creating new scene with updated colors
+                gs_handle.remove()
+                gs_handle = server.scene.add_gaussian_splats(
+                    f"/0/gaussian_splats",
+                    centers=splat_data["centers"],
+                    rgbs=splat_data["rgbs"],
+                    opacities=splat_data["opacities"],
+                    covariances=splat_data["covariances"],
+                )
+                
+
+            @server.scene.on_pointer_callback_removed
+            def _():
+                paint_selection_button_handle.disabled = False
         
         paint_all_button_handle = server.gui.add_button("Paint all splats", icon=viser.Icon.PAINT)
         @paint_all_button_handle.on_click

@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import colorsys
+import random
+import copy
+
 import time
 from pathlib import Path
 from typing import TypedDict
@@ -107,9 +111,7 @@ def load_ply_file(ply_file_path: Path, center: bool = False) -> SplatFile:
 
 def main(splat_paths: tuple[Path, ...] = ()) -> None:
     server = viser.ViserServer()
-    server.gui.configure_theme(dark_mode=True)
-    print("Server running at http://localhost:8080")
-
+    server.gui.configure_theme(dark_mode=False)
     gui_reset_up = server.gui.add_button(
         "Reset up direction",
         hint="Set the camera control 'up' direction to the current camera's 'up'.",
@@ -118,60 +120,331 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
     @gui_reset_up.on_click
     def _(event: viser.GuiEvent) -> None:
         client = event.client
-        if client is not None:
-            client.camera.up_direction = tf.SO3(client.camera.wxyz) @ np.array([0.0, -1.0, 0.0])
-
-    if len(splat_paths) == 0:
-        # Show empty scene with one interactive Gaussian as placeholder
-        center = np.array([[0.0, 0.0, 0.0]])
-        red = np.array([[1.0, 0.0, 0.0]])
-        green = np.array([[0.0, 1.0, 0.0]])
-        opacity = np.array([[1.0]])
-        covariance = np.array([np.eye(3) * 0.01])
-
-        gs_handle = server.scene.add_gaussian_splats(
-            "/manual/gaussian",
-            centers=center,
-            rgbs=red.copy(),
-            opacities=opacity,
-            covariances=covariance,
+        assert client is not None
+        client.camera.up_direction = tf.SO3(client.camera.wxyz) @ np.array(
+            [0.0, -1.0, 0.0]
         )
 
-        # color_state = {"highlighted": False}
+    if not splat_paths:
+        print("Red splat loaded...")
+        scale = 0.1
+        splat_data: SplatFile = {
+            "centers": np.array([[0.0, 0.0, 0.0]], dtype=np.float32),
+            "rgbs": np.array([[1.0, 0.0, 0.0]], dtype=np.float32),
+            "opacities": np.array([[1.0]], dtype=np.float32),
+            "covariances": np.array([np.eye(3, dtype=np.float32) * scale**2], dtype=np.float32),
+        }
+        for rgb in splat_data["rgbs"]:
+            print(rgb)  # This will print something like [1. 0. 0.]
+        server.scene.add_transform_controls(f"/0")
+        gs_handle = server.scene.add_gaussian_splats(
+            f"/0/gaussian_splats",
+            centers=splat_data["centers"],
+            rgbs=splat_data["rgbs"],
+            opacities=splat_data["opacities"],
+            covariances=splat_data["covariances"],
+        )
 
-        # @server.scene.on_pointer_event("click")
-        # def handle_click(event: viser.ScenePointerEvent) -> None:
-        #     dist = np.linalg.norm(event.position - center[0])
-        #     if dist < 0.1:
-        #         color_state["highlighted"] = not color_state["highlighted"]
-        #         gs_handle.update(rgbs=green if color_state["highlighted"] else red)
-        #         print("Toggled manual Gaussian color")
-        
-    else:
-        # Load splats from files
-        for i, splat_path in enumerate(splat_paths):
-            if splat_path.suffix == ".splat":
-                splat_data = load_splat_file(splat_path, center=True)
-            elif splat_path.suffix == ".ply":
-                splat_data = load_ply_file(splat_path, center=True)
-            else:
-                raise SystemExit("Please provide a .splat or .ply file.")
+        remove_button = server.gui.add_button(f"Remove splat object 0")
 
-            server.scene.add_transform_controls(f"/{i}")
+        @remove_button.on_click
+        def _(_, gs_handle=gs_handle, remove_button=remove_button) -> None:
+            gs_handle.remove()
+            remove_button.remove()
+
+        paint_all_button_handle = server.gui.add_button("Paint all splats", icon=viser.Icon.PAINT)
+        @paint_all_button_handle.on_click
+        def _(_, gs_handle=gs_handle):
+            print("Print all pressed!")
+            for rgb in splat_data["rgbs"]:
+                splat_data["rgbs"][:] = np.array([1.0, 0.0, 1.0])
+            for rgb in splat_data["rgbs"]:
+                print(rgb)  # This will print something like [1. 0. 0.]
+            
+            gs_handle.remove()
             gs_handle = server.scene.add_gaussian_splats(
-                f"/{i}/gaussian_splats",
+                f"/0/gaussian_splats",
                 centers=splat_data["centers"],
                 rgbs=splat_data["rgbs"],
                 opacities=splat_data["opacities"],
                 covariances=splat_data["covariances"],
             )
 
-            remove_button = server.gui.add_button(f"Remove splat object {i}")
+        paint_button_handle = server.gui.add_button("Paint splats", icon=viser.Icon.PAINT)
+        @paint_button_handle.on_click
+        def _(_):
+            paint_button_handle.disabled = True
 
-            @remove_button.on_click
-            def _(_, gs_handle=gs_handle, remove_button=remove_button) -> None:
+            @server.scene.on_pointer_event(event_type="rect-select")
+            def _(message: viser.ScenePointerEvent) -> None:
+                server.scene.remove_pointer_callback()
+
+                camera = message.client.camera
+
+                (x0, y0), (x1, y1) = message.screen_pos
+                screen_corners = [
+                    (x0, y0),
+                    (x1, y0),
+                    (x1, y1),
+                    (x0, y1)
+                ]
+
+                print("Corners are {0}".format(screen_corners));
+                
+
+            @server.scene.on_pointer_callback_removed
+            def _():
+                paint_button_handle.disabled = False
+
+    for i, splat_path in enumerate(splat_paths):
+        if splat_path.suffix == ".splat":
+            splat_data = load_splat_file(splat_path, center=True)
+        elif splat_path.suffix == ".ply":
+            splat_data = load_ply_file(splat_path, center=True)
+        else:
+            raise SystemExit("Please provide a filepath to a .splat or .ply file.")
+        
+        original_splat_data = copy.deepcopy(splat_data)
+
+        # server.scene.add_transform_controls(f"/{i}")
+        gs_handle = server.scene.add_gaussian_splats(
+            f"/{i}/gaussian_splats",
+            centers=splat_data["centers"],
+            rgbs=splat_data["rgbs"],
+            opacities=splat_data["opacities"],
+            covariances=splat_data["covariances"],
+        )
+
+        remove_button = server.gui.add_button(f"Remove splat object {i}")
+
+        @remove_button.on_click
+        def _(_, gs_handle=gs_handle, remove_button=remove_button) -> None:
+            gs_handle.remove()
+            remove_button.remove()
+        
+        reset_scene_color_button_handle = server.gui.add_button("Reset scene colors", icon=viser.Icon.RESTORE)
+        @reset_scene_color_button_handle.on_click
+        def _(_, gs_handle=gs_handle):
+            gs_handle.remove()
+
+            new_gs_handle = server.scene.add_gaussian_splats(
+                f"/0/gaussian_splats",
+                centers=original_splat_data["centers"],
+                rgbs=original_splat_data["rgbs"],
+                opacities=original_splat_data["opacities"],
+                covariances=original_splat_data["covariances"],
+            )
+            gs_handle = new_gs_handle
+        
+        paint_all_button_handle = server.gui.add_button("Paint all splats", icon=viser.Icon.PAINT)
+        @paint_all_button_handle.on_click
+        def _(_, gs_handle=gs_handle):
+            splat_data = copy.deepcopy(original_splat_data)
+            centers = splat_data["centers"]
+
+            # Calculate the bounding box of the centers
+            min_xyz = centers.min(axis=0)  # [min_x, min_y, min_z]
+            max_xyz = centers.max(axis=0)  # [max_x, max_y, max_z]
+            range_xyz = max_xyz - min_xyz  # Range for normalization
+
+            for i, rgb in enumerate(splat_data["rgbs"]):
+                curr_center = splat_data["centers"][i]
+
+                # Normalize the position to [0, 1]
+                normalized_pos = (curr_center - min_xyz) / range_xyz
+
+                # convert current rgb values to HSV
+                curr_hsv = colorsys.rgb_to_hsv(rgb[0], rgb[1], rgb[2])
+
+                # Map normalized position to HSV
+                hue = ((normalized_pos[0] + normalized_pos[1] + normalized_pos[2]) * 3.0) % 1.0
+                saturation = curr_hsv[1]         # vibrancy
+                value = curr_hsv[2]              # brightness
+
+                # Convert HSV to RGB
+                splat_data["rgbs"][i] = colorsys.hsv_to_rgb(hue, saturation, value)
+
+            gs_handle.remove()            
+            new_gs_handle = server.scene.add_gaussian_splats(
+                f"/0/gaussian_splats",
+                centers=splat_data["centers"],
+                rgbs=splat_data["rgbs"],
+                opacities=splat_data["opacities"],
+                covariances=splat_data["covariances"],
+            )
+            gs_handle = new_gs_handle
+        
+        paint_splats_random_button_handle = server.gui.add_button("Paint random color", icon=viser.Icon.PAINT)
+        @paint_splats_random_button_handle.on_click
+        def _(_, gs_handle=gs_handle):
+            splat_data = copy.deepcopy(original_splat_data)
+
+            rand_hue = random.random()
+
+            for i, rgb in enumerate(splat_data["rgbs"]):
+                # convert current rgb values to HSV
+                curr_hsv = colorsys.rgb_to_hsv(rgb[0], rgb[1], rgb[2])
+
+                # Map normalized position to HSV
+                hue = rand_hue
+                saturation = curr_hsv[1]         # vibrancy
+                value = curr_hsv[2]              # brightness
+
+                # Convert HSV to RGB
+                splat_data["rgbs"][i] = colorsys.hsv_to_rgb(hue, saturation, value)
+
+            gs_handle.remove()
+
+            new_gs_handle = server.scene.add_gaussian_splats(
+                f"/0/gaussian_splats",
+                centers=splat_data["centers"],
+                rgbs=splat_data["rgbs"],
+                opacities=splat_data["opacities"],
+                covariances=splat_data["covariances"],
+            )
+            gs_handle = new_gs_handle
+        
+        paint_bw_button_handle = server.gui.add_button("Paint scene black and white", icon=viser.Icon.PAINT)
+        @paint_bw_button_handle.on_click
+        def _(_, gs_handle=gs_handle):
+            splat_data = copy.deepcopy(original_splat_data)
+
+            for i, rgb in enumerate(splat_data["rgbs"]):
+                # convert current rgb values to HSV
+                curr_hsv = colorsys.rgb_to_hsv(rgb[0], rgb[1], rgb[2])
+
+                # Map normalized position to HSV
+                hue = curr_hsv[0]
+                saturation = 0         # vibrancy
+                value = curr_hsv[2]              # brightness
+
+                # Convert HSV to RGB
+                splat_data["rgbs"][i] = colorsys.hsv_to_rgb(hue, saturation, value)
+
+            gs_handle.remove()
+
+            new_gs_handle = server.scene.add_gaussian_splats(
+                f"/0/gaussian_splats",
+                centers=splat_data["centers"],
+                rgbs=splat_data["rgbs"],
+                opacities=splat_data["opacities"],
+                covariances=splat_data["covariances"],
+            )
+            gs_handle = new_gs_handle
+
+        paint_random_indiviual_button_handle = server.gui.add_button("Paint random individual colors", icon=viser.Icon.PAINT)
+        @paint_random_indiviual_button_handle.on_click
+        def _(_, gs_handle=gs_handle):
+            splat_data = copy.deepcopy(original_splat_data)
+
+            for i, rgb in enumerate(splat_data["rgbs"]):
+                # convert current rgb values to HSV
+                curr_hsv = colorsys.rgb_to_hsv(rgb[0], rgb[1], rgb[2])
+
+                # Map normalized position to HSV
+                hue = random.random()
+                saturation = curr_hsv[1]         # vibrancy
+                value = curr_hsv[2]              # brightness
+
+                # Convert HSV to RGB
+                splat_data["rgbs"][i] = colorsys.hsv_to_rgb(hue, saturation, value)
+
+            gs_handle.remove()
+
+            new_gs_handle = server.scene.add_gaussian_splats(
+                f"/0/gaussian_splats",
+                centers=splat_data["centers"],
+                rgbs=splat_data["rgbs"],
+                opacities=splat_data["opacities"],
+                covariances=splat_data["covariances"],
+            )
+            gs_handle = new_gs_handle
+
+        # Add RGB color picker to control paint color
+        color_picker_handle = server.gui.add_rgb(
+            label="Paint Color",
+            initial_value=(255, 0, 0),  # Start with red
+            hint="Select color for painting splats"
+        )
+
+        # Current paint color (normalized to [0,1] range)
+        current_paint_color = np.array([1.0, 0.0, 0.0])
+
+        @color_picker_handle.on_update
+        def _(_):
+            global current_paint_color
+            # Convert from [0,255] to [0,1] range
+            current_paint_color = np.array(color_picker_handle.value) / 255.0
+
+        # Paint selection button with color picker integration
+        paint_selection_button_handle = server.gui.add_button(
+            "Paint selection", 
+            icon=viser.Icon.PAINT,
+            hint="Select splats to paint with current color"
+        )
+
+        @paint_selection_button_handle.on_click
+        def _(_, gs_handle=gs_handle):
+            paint_selection_button_handle.disabled = True
+
+            @server.scene.on_pointer_event(event_type="rect-select")
+            def _(message: viser.ScenePointerEvent, gs_handle=gs_handle) -> None:
+                server.scene.remove_pointer_callback()
+                camera = message.client.camera
+
+                # Transform centers to camera space
+                R_camera_world = tf.SE3.from_rotation_and_translation(
+                    tf.SO3(camera.wxyz), camera.position
+                ).inverse()
+                centers_camera_frame = (
+                    R_camera_world.as_matrix()
+                    @ np.hstack([splat_data["centers"], np.ones((splat_data["centers"].shape[0], 1))]).T
+                ).T[:, :3]
+
+                # Only consider points in front of camera
+                in_front = centers_camera_frame[:, 2] < 0
+                valid_centers = centers_camera_frame[in_front]
+
+                # Project the centers onto the image plane
+                fov, aspect = camera.fov, camera.aspect
+                centers_proj = valid_centers[:, :2] / valid_centers[:, 2].reshape(-1, 1)
+                centers_proj /= np.tan(np.radians(fov) / 2)
+                centers_proj[:, 0] /= aspect
+
+                # Normalize to [0, 1] range (origin at bottom-left)
+                centers_proj = (1 + centers_proj) / 2
+
+                # Get selection rectangle coordinates
+                (x0, y0), (x1, y1) = message.screen_pos
+                x_min, x_max = min(x0, x1), max(x0, x1)
+                y_min, y_max = min(y0, y1), max(y0, y1)
+
+                # Create combined mask (in front AND in selection rectangle)
+                selected_in_front = (
+                    (centers_proj[:, 0] >= x_min) & (centers_proj[:, 0] <= x_max) &
+                    (centers_proj[:, 1] >= y_min) & (centers_proj[:, 1] <= y_max)
+                )
+                
+                # Create full mask that maps back to original array
+                full_mask = np.zeros(len(centers_camera_frame), dtype=bool)
+                full_mask[in_front] = selected_in_front
+
+                # Update colors of selected splats using current color
+                splat_data["rgbs"][full_mask] = current_paint_color
+
+                # Update visualization
                 gs_handle.remove()
-                remove_button.remove()
+                gs_handle = server.scene.add_gaussian_splats(
+                    f"/0/gaussian_splats",
+                    centers=splat_data["centers"],
+                    rgbs=splat_data["rgbs"],
+                    opacities=splat_data["opacities"],
+                    covariances=splat_data["covariances"],
+                )
+
+            @server.scene.on_pointer_callback_removed
+            def _():
+                paint_selection_button_handle.disabled = False
 
     while True:
         time.sleep(10.0)

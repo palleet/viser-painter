@@ -118,6 +118,8 @@ function ViewerRoot() {
       dragStart: [0, 0],
       dragEnd: [0, 0],
       isDragging: false,
+      brushPoints: [],
+      brushSize: 20,
     }),
     canvas2dRef: React.useRef(null),
     skinnedMeshState: React.useRef({}),
@@ -274,6 +276,8 @@ function ViewerCanvas({ children }: { children: React.ReactNode }) {
           // Only allow one drag event at a time.
           if (pointerInfo.isDragging) return;
           pointerInfo.isDragging = true;
+          pointerInfo.brushSize = 2
+          pointerInfo.brushPoints = []; // Reset brush points at start
 
           // Disable camera controls -- we don't want the camera to move while we're dragging.
           viewer.cameraControlRef.current!.enabled = false;

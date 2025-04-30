@@ -796,7 +796,7 @@ export interface ViewerCameraMessage {
  */
 export interface ScenePointerMessage {
   type: "ScenePointerMessage";
-  event_type: "click" | "rect-select";
+  event_type: "click" | "rect-select" | "brush";
   ray_origin: [number, number, number] | null;
   ray_direction: [number, number, number] | null;
   screen_pos: [number, number][];
@@ -808,7 +808,7 @@ export interface ScenePointerMessage {
 export interface ScenePointerEnableMessage {
   type: "ScenePointerEnableMessage";
   enable: boolean;
-  event_type: "click" | "rect-select";
+  event_type: "click" | "rect-select" | "brush";
 }
 /** Environment Map message.
  *

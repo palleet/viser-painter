@@ -18,3 +18,5 @@ build
 src/viser/client/build
 src/viser/client/.nodeenv
 .ply
+campanile.ply
+poster.ply

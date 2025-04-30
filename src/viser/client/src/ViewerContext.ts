@@ -56,6 +56,8 @@ export type ViewerContextContents = {
     dragStart: [number, number]; // First mouse position.
     dragEnd: [number, number]; // Final mouse position.
     isDragging: boolean;
+    brushPoints: [number, number][];
+    brushSize: number;
   }>;
   // 2D canvas for drawing -- can be used to give feedback on cursor movement, or more.
   canvas2dRef: React.MutableRefObject<HTMLCanvasElement | null>;

@@ -185,7 +185,7 @@ class ViewerCameraMessage(Message):
 
 
 # The list of scene pointer events supported by the viser frontend.
-ScenePointerEventType = Literal["click", "rect-select"]
+ScenePointerEventType = Literal["click", "rect-select", "brush"]
 
 
 @dataclasses.dataclass

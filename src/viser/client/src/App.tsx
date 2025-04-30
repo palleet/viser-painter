@@ -51,6 +51,25 @@ import { BrowserWarning } from "./BrowserWarning";
 
 THREE.ColorManagement.enabled = true;
 
+// Helper function to draw a single brush point
+function drawBrushPoint(ctx: CanvasRenderingContext2D, point: [number, number], size: number) {
+  ctx.beginPath();
+  ctx.fillStyle = "rgba(100, 200, 255, 0.5)";
+  ctx.arc(point[0], point[1], size / 2, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+// Helper function to draw a complete brush stroke
+function drawBrushStroke(ctx: CanvasRenderingContext2D, points: [number, number][], size: number) {
+  ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+  points.forEach(point => drawBrushPoint(ctx, point, size));
+}
+
+// Helper function to calculate distance between points
+function distance(a: [number, number], b: [number, number]) {
+  return Math.sqrt(Math.pow(a[0] - b[0], 2) + Math.pow(a[1] - b[1], 2));
+}
+
 function ViewerRoot() {
   // What websocket server should we connect to?
   function getDefaultServerFromUrl() {
@@ -276,14 +295,23 @@ function ViewerCanvas({ children }: { children: React.ReactNode }) {
           // Only allow one drag event at a time.
           if (pointerInfo.isDragging) return;
           pointerInfo.isDragging = true;
-          pointerInfo.brushSize = 2
           pointerInfo.brushPoints = []; // Reset brush points at start
+
+          // Add first point
+          if (pointerInfo.enabled === "brush") {
+            pointerInfo.brushPoints.push(pointerInfo.dragStart);
+          }
 
           // Disable camera controls -- we don't want the camera to move while we're dragging.
           viewer.cameraControlRef.current!.enabled = false;
 
           const ctx = viewer.canvas2dRef.current!.getContext("2d")!;
           ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+
+          // Draw initial brush point if in brush mode
+          if (pointerInfo.enabled === "brush") {
+            drawBrushPoint(ctx, pointerInfo.dragStart, pointerInfo.brushSize);
+          }
         }}
         onPointerMove={(e) => {
           const pointerInfo = viewer.scenePointerInfo.current!;
@@ -291,7 +319,7 @@ function ViewerCanvas({ children }: { children: React.ReactNode }) {
           // Only handle if click events are enabled, and if pointer is down (i.e., dragging).
           if (pointerInfo.enabled === false || !pointerInfo.isDragging) return;
 
-          // Check if pointer position is in boudns.
+          // Check if pointer position is in bounds.
           const canvasBbox = viewer.canvasRef.current!.getBoundingClientRect();
           const pointerXy: [number, number] = [
             e.clientX - canvasBbox.left,
@@ -300,8 +328,6 @@ function ViewerCanvas({ children }: { children: React.ReactNode }) {
           if (ndcFromPointerXy(viewer, pointerXy) === null) return;
 
           // Check if mouse position has changed sufficiently from last position.
-          // Uses 3px as a threshood, similar to drag detection in
-          // `SceneNodeClickMessage` from `SceneTree.tsx`.
           pointerInfo.dragEnd = pointerXy;
           if (
             Math.abs(pointerInfo.dragEnd[0] - pointerInfo.dragStart[0]) <= 3 &&
@@ -309,7 +335,7 @@ function ViewerCanvas({ children }: { children: React.ReactNode }) {
           )
             return;
 
-          // If we're listening for scene box events, draw the box on the 2D canvas for user feedback.
+          // Handle different pointer modes
           if (pointerInfo.enabled === "rect-select") {
             const ctx = viewer.canvas2dRef.current!.getContext("2d")!;
             ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
@@ -325,6 +351,16 @@ function ViewerCanvas({ children }: { children: React.ReactNode }) {
             );
             ctx.globalAlpha = 1.0;
             ctx.stroke();
+          } else if (pointerInfo.enabled === "brush") {
+            // Add point to brush stroke if it's significantly different from last point
+            if (pointerInfo.brushPoints.length === 0 || 
+                distance(pointerXy, pointerInfo.brushPoints[pointerInfo.brushPoints.length - 1]) > 5) {
+              pointerInfo.brushPoints.push(pointerXy);
+            }
+
+            // Draw the brush stroke
+            const ctx = viewer.canvas2dRef.current!.getContext("2d")!;
+            drawBrushStroke(ctx, pointerInfo.brushPoints, pointerInfo.brushSize);
           }
         }}
         onPointerUp={() => {
@@ -340,8 +376,7 @@ function ViewerCanvas({ children }: { children: React.ReactNode }) {
           const ctx = viewer.canvas2dRef.current!.getContext("2d")!;
           ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
 
-          // If there's only one pointer, send a click message.
-          // The message will return origin/direction lists of length 1.
+          // Handle different pointer modes
           if (pointerInfo.enabled === "click") {
             const raycaster = new THREE.Raycaster();
 
@@ -369,9 +404,6 @@ function ViewerCanvas({ children }: { children: React.ReactNode }) {
               screen_pos: [[mouseVectorOpenCV.x, mouseVectorOpenCV.y]],
             });
           } else if (pointerInfo.enabled === "rect-select") {
-            // If the ScenePointerEvent had mouse drag movement, we will send a "box" message:
-            // Use the first and last mouse positions to create a box.
-            // Again, click should be in openCV image coordinates (normalized).
             const firstMouseVector = opencvXyFromPointerXy(
               viewer,
               pointerInfo.dragStart,
@@ -398,6 +430,21 @@ function ViewerCanvas({ children }: { children: React.ReactNode }) {
               ray_origin: null,
               ray_direction: null,
               screen_pos: screenBoxList,
+            });
+          } else if (pointerInfo.enabled === "brush" && pointerInfo.brushPoints.length > 0) {
+            // Send brush points to server in normalized OpenCV coordinates
+            const opencvPoints = pointerInfo.brushPoints.map(point => {
+              const vec = opencvXyFromPointerXy(viewer, point);
+              return [vec.x, vec.y] as [number, number];
+          });
+            
+            sendClickThrottled({
+              type: "ScenePointerMessage",
+              event_type: "brush",
+              ray_origin: null,
+              ray_direction: null,
+              screen_pos: opencvPoints,
+              brush_size: pointerInfo.brushSize,
             });
           }
 

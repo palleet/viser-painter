@@ -445,6 +445,81 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
             @server.scene.on_pointer_callback_removed
             def _():
                 paint_selection_button_handle.disabled = False
+        brush_paint_button_handle = server.gui.add_button(
+        "Brush paint", 
+        icon=viser.Icon.PAINT,
+        hint="Paint with a brush tool"
+    )
+
+        @brush_paint_button_handle.on_click
+        def _(_, gs_handle=gs_handle):
+            brush_paint_button_handle.disabled = True
+            
+            @server.scene.on_pointer_event(event_type="brush")
+            def _(message: viser.ScenePointerEvent, gs_handle=gs_handle) -> None:
+                server.scene.remove_pointer_callback()
+                camera = message.client.camera
+                
+                # Get brush points and size from the message
+                brush_points = message.screen_pos  # List of [x,y] coordinates
+                brush_size = message.brush_size  # Brush size in pixels
+                
+                # Transform centers to camera space
+                R_camera_world = tf.SE3.from_rotation_and_translation(
+                    tf.SO3(camera.wxyz), camera.position
+                ).inverse()
+                centers_camera_frame = (
+                    R_camera_world.as_matrix()
+                    @ np.hstack([splat_data["centers"], np.ones((splat_data["centers"].shape[0], 1))]).T
+                ).T[:, :3]
+
+                # Only consider points in front of camera
+                in_front = centers_camera_frame[:, 2] < 0
+                valid_centers = centers_camera_frame[in_front]
+
+                # Project the centers onto the image plane
+                fov, aspect = camera.fov, camera.aspect
+                centers_proj = valid_centers[:, :2] / valid_centers[:, 2].reshape(-1, 1)
+                centers_proj /= np.tan(np.radians(fov) / 2)
+                centers_proj[:, 0] /= aspect
+
+                # Normalize to [0, 1] range (origin at bottom-left)
+                centers_proj = (1 + centers_proj) / 2
+                
+                # Convert brush size from pixels to normalized coordinates
+                # (approximate conversion - may need adjustment)
+                brush_size_norm = brush_size / 1000.0
+                
+                # Create mask for points affected by the brush stroke
+                affected_mask = np.zeros(len(centers_camera_frame), dtype=bool)
+                
+                for brush_point in brush_points:
+                    bx, by = brush_point
+                    # Calculate distance from each point to brush center
+                    distances = np.sqrt(
+                        (centers_proj[:, 0] - bx)**2 + 
+                        (centers_proj[:, 1] - by)**2
+                    )
+                    # Points within brush radius are affected
+                    affected = distances <= brush_size_norm
+                    affected_mask[in_front] = affected_mask[in_front] | affected
+                
+                # Update colors of affected splats using current color
+                splat_data["rgbs"][affected_mask] = current_paint_color
+
+                # Update visualization
+                gs_handle.remove()
+                gs_handle = server.scene.add_gaussian_splats(
+                    f"/0/gaussian_splats",
+                    centers=splat_data["centers"],
+                    rgbs=splat_data["rgbs"],
+                    opacities=splat_data["opacities"],
+                    covariances=splat_data["covariances"],
+                )
+
+            @server.scene.on_pointer_callback_removed
+            def _():
+                brush_paint_button_handle.disabled = False
 
     while True:
         time.sleep(10.0)

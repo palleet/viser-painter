@@ -800,6 +800,7 @@ export interface ScenePointerMessage {
   ray_origin: [number, number, number] | null;
   ray_direction: [number, number, number] | null;
   screen_pos: [number, number][];
+  brush_size?: number;
 }
 /** Message to enable/disable scene click events.
  *

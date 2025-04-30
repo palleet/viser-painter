@@ -232,6 +232,7 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
         else:
             raise SystemExit("Please provide a filepath to a .splat or .ply file.")
         
+        # keep original splat data to reset back to
         original_splat_data = copy.deepcopy(splat_data)
 
         # server.scene.add_transform_controls(f"/{i}")
@@ -242,29 +243,26 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
             opacities=splat_data["opacities"],
             covariances=splat_data["covariances"],
         )
-
-        remove_button = server.gui.add_button(f"Remove splat object {i}")
-
-        @remove_button.on_click
-        def _(_, gs_handle=gs_handle, remove_button=remove_button) -> None:
-            gs_handle.remove()
-            remove_button.remove()
-
-        rgb_button_handle = server.gui.add_rgb("Color picker", (0, 0, 0))
         
         reset_scene_color_button_handle = server.gui.add_button("Reset scene colors", icon=viser.Icon.RESTORE)
         @reset_scene_color_button_handle.on_click
         def _(_, gs_handle=gs_handle):
             gs_handle.remove()
 
-            new_gs_handle = server.scene.add_gaussian_splats(
-                f"/0/gaussian_splats",
-                centers=original_splat_data["centers"],
-                rgbs=original_splat_data["rgbs"],
-                opacities=original_splat_data["opacities"],
-                covariances=original_splat_data["covariances"],
-            )
-            gs_handle = new_gs_handle
+            splat_data["centers"] = original_splat_data["centers"].copy()
+            splat_data["covariances"] = original_splat_data["covariances"].copy()
+            splat_data["opacities"] = original_splat_data["opacities"].copy()
+            splat_data["rgbs"] = original_splat_data["rgbs"].copy()
+
+            gs_handle = server.scene.add_gaussian_splats(
+                    f"/0/gaussian_splats",
+                    centers=original_splat_data["centers"],
+                    rgbs=original_splat_data["rgbs"],
+                    opacities=original_splat_data["opacities"],
+                    covariances=original_splat_data["covariances"],
+                )
+
+        rgb_button_handle = server.gui.add_rgb("Color picker", (0, 0, 0))
 
         paint_selection_button_handle = server.gui.add_button("Paint selection", icon=viser.Icon.PAINT)
         @paint_selection_button_handle.on_click
@@ -273,7 +271,7 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
 
             @server.scene.on_pointer_event(event_type="rect-select")
             def _(message: viser.ScenePointerEvent, gs_handle=gs_handle, rgb_button_handle=rgb_button_handle) -> None:
-                print("Selected color is {0}", rgb_button_handle.value)
+                print("Selected color is {0}".format(rgb_button_handle.value))
                 server.scene.remove_pointer_callback()
 
                 camera = message.client.camera
@@ -296,12 +294,28 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
                 # Normalize to [0, 1] range
                 centers_proj = (1 + centers_proj) / 2
 
+                # create a plane perpendicular to the camera vector
+                # get camera position
+                v_position = camera.position
+                # get camera rotation vector
+                forward_camera = np.array([0, 0, -1])
+                forward_world = R_camera_world.rotation().apply(forward_camera)
+                print("Camera vector is {0}".format(forward_world))
+
+                centers_h = np.hstack([splat_data["centers"], np.ones((splat_data["centers"].shape[0], 1))])
+
+                # Transform centers to camera frame
+                centers_camera = (R_camera_world.as_matrix() @ centers_h.T).T[:, :3]  # (N, 3)
+
+                # Select only those with positive z (in front of the camera)
+                camera_front_mask = centers_camera[:, 2] > 0
+
                 # Check which centers are inside the selected rectangle
                 (x0, y0), (x1, y1) = message.screen_pos
                 mask = (
                     (centers_proj[:, 0] >= x0) & (centers_proj[:, 0] <= x1) &
-                    (centers_proj[:, 1] >= y0) & (centers_proj[:, 1] <= y1)
-                )
+                    (centers_proj[:, 1] >= y0) & (centers_proj[:, 1] <= y1) & camera_front_mask
+                )   
 
                 # Update colors of select splats
                 r = rgb_button_handle.value[0] / 255.0
@@ -353,92 +367,6 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
                 splat_data["rgbs"][i] = colorsys.hsv_to_rgb(hue, saturation, value)
 
             gs_handle.remove()            
-            new_gs_handle = server.scene.add_gaussian_splats(
-                f"/0/gaussian_splats",
-                centers=splat_data["centers"],
-                rgbs=splat_data["rgbs"],
-                opacities=splat_data["opacities"],
-                covariances=splat_data["covariances"],
-            )
-            gs_handle = new_gs_handle
-        
-        paint_splats_random_button_handle = server.gui.add_button("Paint random color", icon=viser.Icon.PAINT)
-        @paint_splats_random_button_handle.on_click
-        def _(_, gs_handle=gs_handle):
-            splat_data = copy.deepcopy(original_splat_data)
-
-            rand_hue = random.random()
-
-            for i, rgb in enumerate(splat_data["rgbs"]):
-                # convert current rgb values to HSV
-                curr_hsv = colorsys.rgb_to_hsv(rgb[0], rgb[1], rgb[2])
-
-                # Map normalized position to HSV
-                hue = rand_hue
-                saturation = curr_hsv[1]         # vibrancy
-                value = curr_hsv[2]              # brightness
-
-                # Convert HSV to RGB
-                splat_data["rgbs"][i] = colorsys.hsv_to_rgb(hue, saturation, value)
-
-            gs_handle.remove()
-
-            new_gs_handle = server.scene.add_gaussian_splats(
-                f"/0/gaussian_splats",
-                centers=splat_data["centers"],
-                rgbs=splat_data["rgbs"],
-                opacities=splat_data["opacities"],
-                covariances=splat_data["covariances"],
-            )
-            gs_handle = new_gs_handle
-        
-        paint_bw_button_handle = server.gui.add_button("Paint scene black and white", icon=viser.Icon.PAINT)
-        @paint_bw_button_handle.on_click
-        def _(_, gs_handle=gs_handle):
-            splat_data = copy.deepcopy(original_splat_data)
-
-            for i, rgb in enumerate(splat_data["rgbs"]):
-                # convert current rgb values to HSV
-                curr_hsv = colorsys.rgb_to_hsv(rgb[0], rgb[1], rgb[2])
-
-                # Map normalized position to HSV
-                hue = curr_hsv[0]
-                saturation = 0         # vibrancy
-                value = curr_hsv[2]              # brightness
-
-                # Convert HSV to RGB
-                splat_data["rgbs"][i] = colorsys.hsv_to_rgb(hue, saturation, value)
-
-            gs_handle.remove()
-
-            new_gs_handle = server.scene.add_gaussian_splats(
-                f"/0/gaussian_splats",
-                centers=splat_data["centers"],
-                rgbs=splat_data["rgbs"],
-                opacities=splat_data["opacities"],
-                covariances=splat_data["covariances"],
-            )
-            gs_handle = new_gs_handle
-
-        paint_random_indiviual_button_handle = server.gui.add_button("Paint random individual colors", icon=viser.Icon.PAINT)
-        @paint_random_indiviual_button_handle.on_click
-        def _(_, gs_handle=gs_handle):
-            splat_data = copy.deepcopy(original_splat_data)
-
-            for i, rgb in enumerate(splat_data["rgbs"]):
-                # convert current rgb values to HSV
-                curr_hsv = colorsys.rgb_to_hsv(rgb[0], rgb[1], rgb[2])
-
-                # Map normalized position to HSV
-                hue = random.random()
-                saturation = curr_hsv[1]         # vibrancy
-                value = curr_hsv[2]              # brightness
-
-                # Convert HSV to RGB
-                splat_data["rgbs"][i] = colorsys.hsv_to_rgb(hue, saturation, value)
-
-            gs_handle.remove()
-
             new_gs_handle = server.scene.add_gaussian_splats(
                 f"/0/gaussian_splats",
                 centers=splat_data["centers"],

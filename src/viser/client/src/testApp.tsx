@@ -221,19 +221,56 @@ function ViewerContents({ children }: { children: React.ReactNode }) {
 
 const DisableRender = () => useFrame(() => null, 1000);
 
+// Add this type definition near your other types (likely in your types file)
+type PointerMode = false | "click" | "rect-select" | "brush";
+
+// Then modify the ViewerCanvas component
 function ViewerCanvas({ children }: { children: React.ReactNode }) {
   const viewer = React.useContext(ViewerContext)!;
   const sendClickThrottled = useThrottledMessageSender(20);
   const theme = useMantineTheme();
 
-  // Make sure we don't re-mount the camera controls, since that will reset the camera position.
+  // Brush state
+  const [brushSize, setBrushSize] = React.useState(10);
+  const [isBrushing, setIsBrushing] = React.useState(false);
+  const brushPositionsRef = React.useRef<[number, number][]>([]);
+
+  // Make sure we don't re-mount the camera controls
   const memoizedCameraControls = React.useMemo(
     () => <SynchronizedCameraControls />,
     [],
   );
 
-  // We'll disable rendering if the canvas is not in view.
+  // Disable rendering if the canvas is not in view
   const { ref: inViewRef, inView } = useInView();
+
+  // Brush drawing helpers
+  const drawBrushPoint = (ctx: CanvasRenderingContext2D, position: [number, number]) => {
+    ctx.beginPath();
+    ctx.fillStyle = theme.primaryColor;
+    ctx.globalAlpha = 0.5;
+    ctx.arc(position[0], position[1], brushSize / 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1.0;
+  };
+
+  const drawBrushStroke = (ctx: CanvasRenderingContext2D) => {
+    if (brushPositionsRef.current.length < 2) return;
+
+    ctx.beginPath();
+    ctx.strokeStyle = theme.primaryColor;
+    ctx.lineWidth = brushSize;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.globalAlpha = 0.5;
+
+    ctx.moveTo(brushPositionsRef.current[0][0], brushPositionsRef.current[0][1]);
+    for (let i = 1; i < brushPositionsRef.current.length; i++) {
+      ctx.lineTo(brushPositionsRef.current[i][0], brushPositionsRef.current[i][1]);
+    }
+    ctx.stroke();
+    ctx.globalAlpha = 1.0;
+  };
 
   return (
     <div
@@ -253,41 +290,38 @@ function ViewerCanvas({ children }: { children: React.ReactNode }) {
           height: "100%",
         }}
         ref={viewer.canvasRef}
-        // Handle scene click events (onPointerDown, onPointerMove, onPointerUp)
         onPointerDown={(e) => {
           const pointerInfo = viewer.scenePointerInfo.current!;
-
-          // Only handle pointer events if enabled.
           if (pointerInfo.enabled === false) return;
 
-          // Keep track of the first click position.
           const canvasBbox = viewer.canvasRef.current!.getBoundingClientRect();
-          pointerInfo.dragStart = [
+          const pointerXy: [number, number] = [
             e.clientX - canvasBbox.left,
             e.clientY - canvasBbox.top,
           ];
-          pointerInfo.dragEnd = pointerInfo.dragStart;
 
-          // Check if pointer position is in bounds.
-          if (ndcFromPointerXy(viewer, pointerInfo.dragEnd) === null) return;
+          pointerInfo.dragStart = pointerXy;
+          pointerInfo.dragEnd = pointerXy;
 
-          // Only allow one drag event at a time.
+          if (ndcFromPointerXy(viewer, pointerXy) === null) return;
           if (pointerInfo.isDragging) return;
-          pointerInfo.isDragging = true;
 
-          // Disable camera controls -- we don't want the camera to move while we're dragging.
+          pointerInfo.isDragging = true;
           viewer.cameraControlRef.current!.enabled = false;
 
           const ctx = viewer.canvas2dRef.current!.getContext("2d")!;
           ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+
+          if (pointerInfo.enabled === "brush") {
+            setIsBrushing(true);
+            brushPositionsRef.current = [pointerXy];
+            drawBrushPoint(ctx, pointerXy);
+          }
         }}
         onPointerMove={(e) => {
           const pointerInfo = viewer.scenePointerInfo.current!;
-
-          // Only handle if click events are enabled, and if pointer is down (i.e., dragging).
           if (pointerInfo.enabled === false || !pointerInfo.isDragging) return;
 
-          // Check if pointer position is in boudns.
           const canvasBbox = viewer.canvasRef.current!.getBoundingClientRect();
           const pointerXy: [number, number] = [
             e.clientX - canvasBbox.left,
@@ -295,19 +329,17 @@ function ViewerCanvas({ children }: { children: React.ReactNode }) {
           ];
           if (ndcFromPointerXy(viewer, pointerXy) === null) return;
 
-          // Check if mouse position has changed sufficiently from last position.
-          // Uses 3px as a threshood, similar to drag detection in
-          // `SceneNodeClickMessage` from `SceneTree.tsx`.
           pointerInfo.dragEnd = pointerXy;
-          if (
-            Math.abs(pointerInfo.dragEnd[0] - pointerInfo.dragStart[0]) <= 3 &&
-            Math.abs(pointerInfo.dragEnd[1] - pointerInfo.dragStart[1]) <= 3
-          )
-            return;
+          const ctx = viewer.canvas2dRef.current!.getContext("2d")!;
 
-          // If we're listening for scene box events, draw the box on the 2D canvas for user feedback.
+          if (pointerInfo.enabled === "brush" && isBrushing) {
+            brushPositionsRef.current.push(pointerXy);
+            ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+            drawBrushStroke(ctx);
+            return;
+          }
+
           if (pointerInfo.enabled === "rect-select") {
-            const ctx = viewer.canvas2dRef.current!.getContext("2d")!;
             ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
             ctx.beginPath();
             ctx.fillStyle = theme.primaryColor;
@@ -325,29 +357,40 @@ function ViewerCanvas({ children }: { children: React.ReactNode }) {
         }}
         onPointerUp={() => {
           const pointerInfo = viewer.scenePointerInfo.current!;
-
-          // Re-enable camera controls! Was disabled in `onPointerDown`, to allow
-          // for mouse drag w/o camera movement.
           viewer.cameraControlRef.current!.enabled = true;
 
-          // Only handle if click events are enabled, and if pointer was down (i.e., dragging).
           if (pointerInfo.enabled === false || !pointerInfo.isDragging) return;
 
           const ctx = viewer.canvas2dRef.current!.getContext("2d")!;
           ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
 
-          // If there's only one pointer, send a click message.
-          // The message will return origin/direction lists of length 1.
+          if (pointerInfo.enabled === "brush" && isBrushing) {
+            setIsBrushing(false);
+            
+            const screenPos = brushPositionsRef.current.map(pos => {
+              const cvPos = opencvXyFromPointerXy(viewer, pos);
+              return [cvPos.x, cvPos.y] as [number, number];
+            });
+
+            sendClickThrottled({
+              type: "ScenePointerMessage",
+              event_type: "brush",
+              ray_origin: null,
+              ray_direction: null,
+              screen_pos: screenPos,
+              brush_size: brushSize / viewer.canvasRef.current!.clientWidth,
+            });
+
+            brushPositionsRef.current = [];
+            return;
+          }
+
           if (pointerInfo.enabled === "click") {
             const raycaster = new THREE.Raycaster();
-
-            // Raycaster expects NDC coordinates, so we convert the click event to NDC.
             const mouseVector = ndcFromPointerXy(viewer, pointerInfo.dragEnd);
             if (mouseVector === null) return;
             raycaster.setFromCamera(mouseVector, viewer.cameraRef.current!);
             const ray = rayToViserCoords(viewer, raycaster.ray);
-
-            // Send OpenCV image coordinates to the server (normalized).
             const mouseVectorOpenCV = opencvXyFromPointerXy(
               viewer,
               pointerInfo.dragEnd,
@@ -365,9 +408,6 @@ function ViewerCanvas({ children }: { children: React.ReactNode }) {
               screen_pos: [[mouseVectorOpenCV.x, mouseVectorOpenCV.y]],
             });
           } else if (pointerInfo.enabled === "rect-select") {
-            // If the ScenePointerEvent had mouse drag movement, we will send a "box" message:
-            // Use the first and last mouse positions to create a box.
-            // Again, click should be in openCV image coordinates (normalized).
             const firstMouseVector = opencvXyFromPointerXy(
               viewer,
               pointerInfo.dragStart,
@@ -382,22 +422,18 @@ function ViewerCanvas({ children }: { children: React.ReactNode }) {
             const y_min = Math.min(firstMouseVector.y, lastMouseVector.y);
             const y_max = Math.max(firstMouseVector.y, lastMouseVector.y);
 
-            // Send the upper-left and lower-right corners of the box.
-            const screenBoxList: [number, number][] = [
-              [x_min, y_min],
-              [x_max, y_max],
-            ];
-
             sendClickThrottled({
               type: "ScenePointerMessage",
               event_type: "rect-select",
               ray_origin: null,
               ray_direction: null,
-              screen_pos: screenBoxList,
+              screen_pos: [
+                [x_min, y_min],
+                [x_max, y_max],
+              ],
             });
           }
 
-          // Release drag lock.
           pointerInfo.isDragging = false;
         }}
       >
@@ -412,6 +448,27 @@ function ViewerCanvas({ children }: { children: React.ReactNode }) {
         </SplatRenderContext>
         <DefaultLights />
       </Canvas>
+
+      {/* Brush controls */}
+      <div style={{
+        position: 'absolute',
+        bottom: '20px',
+        left: '20px',
+        backgroundColor: 'rgba(0,0,0,0.7)',
+        padding: '10px',
+        borderRadius: '5px',
+        zIndex: 10,
+      }}>
+        <div style={{ color: 'white', marginBottom: '5px' }}>Brush Size: {brushSize}px</div>
+        <input
+          type="range"
+          min="1"
+          max="50"
+          value={brushSize}
+          onChange={(e) => setBrushSize(parseInt(e.target.value))}
+          style={{ width: '150px' }}
+        />
+      </div>
     </div>
   );
 }

@@ -444,7 +444,6 @@ function ViewerCanvas({ children }: { children: React.ReactNode }) {
               ray_origin: null,
               ray_direction: null,
               screen_pos: opencvPoints,
-              brush_size: pointerInfo.brushSize,
             });
           }
 

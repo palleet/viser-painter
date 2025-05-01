@@ -1,5 +1,4 @@
 from __future__ import annotations
-from typing import Optional
 
 import copy
 import dataclasses
@@ -120,8 +119,6 @@ class ScenePointerEvent:
     """Screen position of the click on the screen (OpenCV image coordinates, 0 to 1).
     (0, 0) is the upper-left corner, (1, 1) is the bottom-right corner.
     For a box selection, this includes the min- and max- corners of the box."""
-    brush_size: Optional[int] = None
-    """uhhhhh"""
 
     @property
     def event(self):

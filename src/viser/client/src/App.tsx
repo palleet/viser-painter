@@ -54,7 +54,7 @@ THREE.ColorManagement.enabled = true;
 // Helper function to draw a single brush point
 function drawBrushPoint(ctx: CanvasRenderingContext2D, point: [number, number], size: number) {
   ctx.beginPath();
-  ctx.fillStyle = "rgba(100, 200, 255, 0.5)";
+  ctx.fillStyle = "rgba(255, 100, 100, 0.5)";
   ctx.arc(point[0], point[1], size / 2, 0, Math.PI * 2);
   ctx.fill();
 }

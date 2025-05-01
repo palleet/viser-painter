@@ -52,7 +52,7 @@ export type ViewerContextContents = {
   getRenderRequest: React.MutableRefObject<null | GetRenderRequestMessage>;
   // Track click drag events.
   scenePointerInfo: React.MutableRefObject<{
-    enabled: false | "click" | "rect-select"; // Enable box events.
+    enabled: false | "click" | "rect-select" | "brush"; // Enable box events.
     dragStart: [number, number]; // First mouse position.
     dragEnd: [number, number]; // Final mouse position.
     isDragging: boolean;

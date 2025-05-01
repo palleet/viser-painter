@@ -444,9 +444,7 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
                 server.scene.remove_pointer_callback()
                 camera = message.client.camera
                 
-                # Get brush points and size from the message
-                brush_points = message.screen_pos  # List of [x,y] coordinates
-                # brush_size = message.brush_size  # Brush size in pixels
+                
                 brush_size = 5
                 # Transform centers to camera space
                 R_camera_world = tf.SE3.from_rotation_and_translation(
@@ -477,7 +475,13 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
                 # Create mask for points affected by the brush stroke
                 affected_mask = np.zeros(len(centers_camera_frame), dtype=bool)
                 
+
+                # TODO fix this
+                # Get brush points and size from the message
+                brush_points = message.screen_pos  # List of [x,y] coordinates
+
                 for brush_point in brush_points:
+                    print(brush_point)
                     bx, by = brush_point
                     # Calculate distance from each point to brush center
                     distances = np.sqrt(

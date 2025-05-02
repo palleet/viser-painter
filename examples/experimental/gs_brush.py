@@ -5,6 +5,7 @@ from __future__ import annotations
 import colorsys
 import random
 import copy
+import math
 
 import time
 from pathlib import Path
@@ -360,7 +361,7 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
                 camera = message.client.camera
                 
                 
-                brush_size = 5
+                brush_size = 20
                 # Transform centers to camera space
                 R_camera_world = tf.SE3.from_rotation_and_translation(
                     tf.SO3(camera.wxyz), camera.position
@@ -389,9 +390,7 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
                 print("Brush size: {0}".format(brush_size))
                 print("Brush size norm: {0}".format(brush_size_norm))
                 radius = brush_size_norm / 2.0
-                
-                # Create mask for points affected by the brush stroke
-                affected_mask = np.zeros(len(centers_camera_frame), dtype=bool)
+
                 
 
                 # TODO fix this
@@ -401,15 +400,15 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
                 print("🎨 New stroke made")
 
                 # create bounding box around brush points
-                x_values = [x for x, y in brush_points]
-                y_values = [y for x, y in brush_points]
+                # x_values = [x for x, y in brush_points]
+                # y_values = [y for x, y in brush_points]
 
-                x_min = min(x_values) - radius
-                y_min = min(y_values) - radius
-                x_max = max(x_values) + radius
-                y_max = max(y_values) + radius
+                # x_min = min(x_values) - radius
+                # y_min = min(y_values) - radius
+                # x_max = max(x_values) + radius
+                # y_max = max(y_values) + radius
                 
-                print("x_min: {0}, x_max: {1}, y_min: {2}, y_max{3}".format(x_min, x_max, y_min, y_max))
+                # print("x_min: {0}, x_max: {1}, y_min: {2}, y_max{3}".format(x_min, x_max, y_min, y_max))
 
 
                 # for brush_point in brush_points:
@@ -432,17 +431,35 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
 
                 # Select only those with positive z (in front of the camera)
                 camera_front_mask = centers_camera[:, 2] > 0
+
+                # Create mask for points affected by the brush stroke
+                affected_mask = np.zeros(len(camera_front_mask), dtype=bool)
+
                 print("🤖camera_front size {0}".format(camera_front_mask.size))
                 print("🐊centers_proj[:, 0] size {0}".format(centers_proj[:, 0].size))
 
+                for brush_point in brush_points:
+                    print("brush point here: {0}".format(brush_point))
+                    bx, by = brush_point
+                    # Calculate distance from each point to brush center
+                    distances = np.sqrt(
+                        (centers_proj[:, 0] - bx)**2 + 
+                        (centers_proj[:, 1] - by)**2
+                    )
+                    
+                    affected = distances <= brush_size_norm
+                    affected_mask[camera_front_mask] |= affected
 
-                ported_mask = (
-                    (centers_proj[:, 0] >= x_min) & (centers_proj[:, 0] <= x_max) &
-                    (centers_proj[:, 1] >= y_min) & (centers_proj[:, 1] <= y_max) & camera_front_mask
-                )   
+                # Compute the distance mask
+                # ported_mask = (
+                #     (centers_proj[:, 0] >= x_min) & (centers_proj[:, 0] <= x_max) &
+                #     (centers_proj[:, 1] >= y_min) & (centers_proj[:, 1] <= y_max) &
+                #     affected_mask &
+                #     camera_front_mask
+                # )
                 
                 # Update colors of affected splats using current color
-                splat_data["rgbs"][ported_mask] = np.array([1, 0.0, 1]) # Paint
+                splat_data["rgbs"][affected_mask] = np.array([1, 0.0, 1]) # Paint
 
                 # Update visualization
                 gs_handle.remove()

@@ -31,6 +31,35 @@ class SplatFile(TypedDict):
     covariances: npt.NDArray[np.floating]
     """(N, 3, 3)."""
 
+def point_to_polyline_distance(points, polyline):
+    """
+    Compute minimum distance from each point to a polyline (sequence of line segments).
+    
+    points: (N, 2) array of points
+    polyline: (M, 2) array of polyline vertices
+    
+    Returns:
+        min_dists: (N,) array of minimum distances
+    """
+    min_dists = np.full(points.shape[0], np.inf)
+    
+    for i in range(len(polyline) - 1):
+        p1 = polyline[i]
+        p2 = polyline[i + 1]
+        seg = p2 - p1
+        
+        v = points - p1  # vectors from p1 to points
+        seg_len_sq = np.sum(seg ** 2)
+        seg_unit = seg / np.sqrt(seg_len_sq + 1e-8)
+        
+        # project points onto the line, clamp to segment
+        t = np.clip(np.sum(v * seg_unit, axis=1) / (np.sqrt(seg_len_sq) + 1e-8), 0, np.sqrt(seg_len_sq))
+        proj = p1 + np.outer(t / (np.sqrt(seg_len_sq) + 1e-8), seg)
+        
+        dists = np.linalg.norm(points - proj, axis=1)
+        min_dists = np.minimum(min_dists, dists)
+    
+    return min_dists
 
 def load_splat_file(splat_path: Path, center: bool = False) -> SplatFile:
     """Load an antimatter15-style splat file."""
@@ -358,9 +387,9 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
             def _(message: viser.ScenePointerEvent, gs_handle=gs_handle) -> None:
                 server.scene.remove_pointer_callback()
                 camera = message.client.camera
-                
-                
-                brush_size = 5
+
+                brush_size = 20
+
                 # Transform centers to camera space
                 R_camera_world = tf.SE3.from_rotation_and_translation(
                     tf.SO3(camera.wxyz), camera.position
@@ -372,7 +401,6 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
 
                 # Only consider points in front of camera
                 in_front = centers_camera_frame[:, 2] < 0
-                valid_centers = centers_camera_frame[in_front]
 
                 # Project the centers onto the image plane
                 fov, aspect = camera.fov, camera.aspect
@@ -382,67 +410,28 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
 
                 # Normalize to [0, 1] range (origin at bottom-left)
                 centers_proj = (1 + centers_proj) / 2
-                
+
                 # Convert brush size from pixels to normalized coordinates
-                # (approximate conversion - may need adjustment)
                 brush_size_norm = brush_size / 1000.0
-                print("Brush size: {0}".format(brush_size))
-                print("Brush size norm: {0}".format(brush_size_norm))
                 radius = brush_size_norm / 2.0
-                
-                # Create mask for points affected by the brush stroke
-                affected_mask = np.zeros(len(centers_camera_frame), dtype=bool)
-                
 
-                # TODO fix this
-                # Get brush points and size from the message
-                brush_points = message.screen_pos  # List of [x,y] coordinates
+                # Get brush points
+                brush_points = np.array(message.screen_pos)  # (M, 2) array
 
-                print("🎨 New stroke made")
-
-                # create bounding box around brush points
-                x_values = [x for x, y in brush_points]
-                y_values = [y for x, y in brush_points]
-
-                x_min = min(x_values) - radius
-                y_min = min(y_values) - radius
-                x_max = max(x_values) + radius
-                y_max = max(y_values) + radius
-                
-                print("x_min: {0}, x_max: {1}, y_min: {2}, y_max{3}".format(x_min, x_max, y_min, y_max))
-
-
-                # for brush_point in brush_points:
-                #     print("brush point here: {0}".format(brush_point))
-                #     bx, by = brush_point
-                #     # Calculate distance from each point to brush center
-                #     distances = np.sqrt(
-                #         (centers_proj[:, 0] - bx)**2 + 
-                #         (centers_proj[:, 1] - by)**2
-                #     )
-                #     # Points within brush radius are affected
-                #     affected = distances <= brush_size_norm
-                #     affected_mask[in_front] = affected_mask[in_front] | affected
-                # print("\n")
-
-                # ONLY IN FRONT OF CAMERA
+                # Transform centers to camera frame again (for front mask)
                 centers_h = np.hstack([splat_data["centers"], np.ones((splat_data["centers"].shape[0], 1))])
-                # Transform centers to camera frame
-                centers_camera = (R_camera_world.as_matrix() @ centers_h.T).T[:, :3]  # (N, 3)
-
-                # Select only those with positive z (in front of the camera)
+                centers_camera = (R_camera_world.as_matrix() @ centers_h.T).T[:, :3]
                 camera_front_mask = centers_camera[:, 2] > 0
-                print("🤖camera_front size {0}".format(camera_front_mask.size))
-                print("🐊centers_proj[:, 0] size {0}".format(centers_proj[:, 0].size))
 
+                # Compute polyline distance
+                min_dists = point_to_polyline_distance(centers_proj, brush_points)
+                affected = min_dists <= radius
 
-                ported_mask = (
-                    (centers_proj[:, 0] >= x_min) & (centers_proj[:, 0] <= x_max) &
-                    (centers_proj[:, 1] >= y_min) & (centers_proj[:, 1] <= y_max) & camera_front_mask
-                )   
-                
-                # Update colors of affected splats using current color
-                splat_data["rgbs"][ported_mask] = np.array([1, 0.0, 1]) # Paint
+                # Combine with camera mask
+                ported_mask = affected & camera_front_mask
+
+                # Update colors of affected splats
+                splat_data["rgbs"][ported_mask] = np.array([1, 0.0, 1])  # magenta
 
                 # Update visualization
                 gs_handle.remove()
@@ -453,6 +442,7 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
                     opacities=splat_data["opacities"],
                     covariances=splat_data["covariances"],
                 )
+
 
             @server.scene.on_pointer_callback_removed
             def _():

@@ -291,20 +291,30 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
                     covariances=original_splat_data["covariances"],
                 )
 
-        rgb_button_handle = server.gui.add_rgb("Color picker", (0, 0, 0))
+        rgba_button_handle = server.gui.add_rgba("Color picker", (0, 255, 255, 255))
+        depth_slider_handle = server.gui.add_slider("Max paint depth", 0.0, 1.0, 0.05, 0.1)
+        opacity_slider_handle = server.gui.add_slider("Opacity threshold", 0.0, 1.0, 0.1, 1.0)
 
+        # RECTANGLE SELECT
         paint_selection_button_handle = server.gui.add_button("Paint selection", icon=viser.Icon.PAINT)
         @paint_selection_button_handle.on_click
-        def _(_, gs_handle=gs_handle, rgb_button_handle=rgb_button_handle):
+        def _(_, gs_handle=gs_handle, rgb_button_handle=rgba_button_handle, depth_slider_handle=depth_slider_handle, opacity_slider_handle=opacity_slider_handle):
             paint_selection_button_handle.disabled = True
 
             @server.scene.on_pointer_event(event_type="rect-select")
-            def _(message: viser.ScenePointerEvent, gs_handle=gs_handle, rgb_button_handle=rgb_button_handle) -> None:
-                print("Selected color is {0}".format(rgb_button_handle.value))
+            def _(message: viser.ScenePointerEvent, gs_handle=gs_handle, rgb_button_handle=rgb_button_handle, depth_slider_handle=depth_slider_handle, opacity_slider_handle=opacity_slider_handle) -> None:
                 server.scene.remove_pointer_callback()
 
                 camera = message.client.camera
 
+                # max range for slider
+                depth_range = 5
+                depth_range_norm = depth_range * depth_slider_handle.value
+
+                # opacity threshold assignment
+                opacity_threshold = opacity_slider_handle.value
+                print("Opacity threshold is {0}".format(opacity_threshold))
+                
                 # Code modified from 20_scene_pointer.py
                 R_camera_world = tf.SE3.from_rotation_and_translation(
                     tf.SO3(camera.wxyz), camera.position
@@ -329,7 +339,6 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
                 # get camera rotation vector
                 forward_camera = np.array([0, 0, -1])
                 forward_world = R_camera_world.rotation().apply(forward_camera)
-                print("Camera vector is {0}".format(forward_world))
 
                 centers_h = np.hstack([splat_data["centers"], np.ones((splat_data["centers"].shape[0], 1))])
 
@@ -338,15 +347,16 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
 
                 # Select only those with positive z (in front of the camera)
                 camera_front_mask = centers_camera[:, 2] > 0
-                print("🤖camera_front size {0}".format(camera_front_mask.size))
-                print("🐊centers_proj[:, 0] size {0}".format(centers_proj[:, 0].size))
 
                 # Check which centers are inside the selected rectangle
                 (x0, y0), (x1, y1) = message.screen_pos
-                print("x0 is {0}".format(x0))
+                first_hit_depth = min(center for index, center in enumerate(centers_camera[:, 2]) if ((splat_data["opacities"][index] >= opacity_threshold) and (center > 0)))
+                print("First hit depth is {0}".format(first_hit_depth))
+                camera_front_mask = (centers_camera[:, 2] > 0) & (centers_camera[:, 2] <= (first_hit_depth + depth_range_norm))
                 mask = (
                     (centers_proj[:, 0] >= x0) & (centers_proj[:, 0] <= x1) &
-                    (centers_proj[:, 1] >= y0) & (centers_proj[:, 1] <= y1) & camera_front_mask
+                    (centers_proj[:, 1] >= y0) & (centers_proj[:, 1] <= y1) & 
+                    camera_front_mask & (splat_data["opacities"][:, 0] >= opacity_threshold)
                 )   
 
                 # Update colors of select splats
@@ -380,15 +390,19 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
     )
 
         @brush_paint_button_handle.on_click
-        def _(_, gs_handle=gs_handle):
+        def _(_, gs_handle=gs_handle, rgb_button_handle=rgba_button_handle, depth_slider_handle=depth_slider_handle, opacity_slider_handle=opacity_slider_handle):
             brush_paint_button_handle.disabled = True
             
             @server.scene.on_pointer_event(event_type="brush")
-            def _(message: viser.ScenePointerEvent, gs_handle=gs_handle) -> None:
+            def _(message: viser.ScenePointerEvent, gs_handle=gs_handle, rgb_button_handle=rgb_button_handle, depth_slider_handle=depth_slider_handle, opacity_slider_handle=opacity_slider_handle) -> None:
                 server.scene.remove_pointer_callback()
                 camera = message.client.camera
 
                 brush_size = 20
+                
+                # max range for slider
+                depth_range = 5
+                depth_range_norm = depth_range * depth_slider_handle.value
 
                 # Transform centers to camera space
                 R_camera_world = tf.SE3.from_rotation_and_translation(
@@ -421,7 +435,7 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
                 # Transform centers to camera frame again (for front mask)
                 centers_h = np.hstack([splat_data["centers"], np.ones((splat_data["centers"].shape[0], 1))])
                 centers_camera = (R_camera_world.as_matrix() @ centers_h.T).T[:, :3]
-                camera_front_mask = centers_camera[:, 2] > 0
+                camera_front_mask = (centers_camera[:, 2] > 0) & (centers_camera[:, 2] <= depth_range_norm)
 
                 # Compute polyline distance
                 min_dists = point_to_polyline_distance(centers_proj, brush_points)
@@ -430,8 +444,13 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
                 # Combine with camera mask
                 ported_mask = affected & camera_front_mask
 
+                # custom color slider values
+                r = rgb_button_handle.value[0] / 255.0
+                g = rgb_button_handle.value[1] / 255.0
+                b = rgb_button_handle.value[2] / 255.0
+
                 # Update colors of affected splats
-                splat_data["rgbs"][ported_mask] = np.array([1, 0.0, 1])  # magenta
+                splat_data["rgbs"][ported_mask] = np.array([r, g, b])  # magenta
 
                 # Update visualization
                 gs_handle.remove()

@@ -15,6 +15,7 @@ import numpy.typing as npt
 import tyro
 from plyfile import PlyData
 from PIL import Image
+from skimage.draw import disk
 
 import viser
 from viser import transforms as tf
@@ -309,6 +310,7 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
             rgba_button_handle = server.gui.add_rgba("Color picker", (0, 255, 255, 255))
             depth_slider_handle = server.gui.add_slider("Max paint depth", 0.0, 10.0, 0.05, 3.0)
             opacity_slider_handle = server.gui.add_slider("Opacity threshold", 0.0, 1.0, 0.1, 0.8)
+            size_slider_handle = server.gui.add_slider("Brush size", 1, 100, 10, 30)
             # RECTANGLE SELECT
             paint_selection_button_handle = server.gui.add_button("Paint selection", icon=viser.Icon.PAINT)
             @paint_selection_button_handle.on_click
@@ -395,15 +397,15 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
         )
 
             @brush_paint_button_handle.on_click
-            def _(_, gs_handle=gs_handle, rgb_button_handle=rgba_button_handle, depth_slider_handle=depth_slider_handle, opacity_slider_handle=opacity_slider_handle):
+            def _(_, gs_handle=gs_handle, rgb_button_handle=rgba_button_handle, depth_slider_handle=depth_slider_handle, opacity_slider_handle=opacity_slider_handle, size_slider_handle=size_slider_handle):
                 brush_paint_button_handle.disabled = True
                 
                 @server.scene.on_pointer_event(event_type="brush")
-                def _(message: viser.ScenePointerEvent, gs_handle=gs_handle, rgb_button_handle=rgb_button_handle, depth_slider_handle=depth_slider_handle, opacity_slider_handle=opacity_slider_handle) -> None:
+                def _(message: viser.ScenePointerEvent, gs_handle=gs_handle, rgb_button_handle=rgb_button_handle, depth_slider_handle=depth_slider_handle, opacity_slider_handle=opacity_slider_handle, size_slider_handle=size_slider_handle) -> None:
                     server.scene.remove_pointer_callback()
                     camera = message.client.camera
 
-                    brush_size = 30
+                    brush_size = size_slider_handle.value
                     
                     # max range for slider
                     depth_range = depth_slider_handle.value
@@ -446,20 +448,60 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
                     centers_camera = (R_camera_world.as_matrix() @ centers_h.T).T[:, :3]
                     camera_front_mask = (centers_camera[:, 2] > 0) & (centers_camera[:, 2] <= depth_range)
 
-                    # Compute polyline distance
-                    min_dists = point_to_polyline_distance(centers_proj, brush_points)
-                    affected = min_dists <= radius
+                    x_dim = 2000
+                    y_dim = 1920
+                    circles = np.empty((y_dim, x_dim, 4))
+                    # create bounding box around brush points
+                    x_values = [x for x, y in brush_points]
+                    y_values = [y for x, y in brush_points]
 
-                    # Combine with camera mask
-                    ported_mask = affected & camera_front_mask
+                    x0 = min(x_values) - radius
+                    x1 = max(x_values) + radius
+                    y0 = min(y_values) - radius
+                    y1 = max(y_values) + radius
 
-                    # custom color slider values
+                    b_height = y1 - y0
+                    b_width = x1 - x0
+
+                    y_dim = (x_dim * b_height) // b_width
+                    print("y_dim is {0}".format(y_dim))
+
                     r = rgb_button_handle.value[0] / 255.0
                     g = rgb_button_handle.value[1] / 255.0
                     b = rgb_button_handle.value[2] / 255.0
 
+                    # Iterate over each brush point and draw a circle
+                    for x, y in brush_points:
+                        # Convert normalized coordinates to pixel coordinates
+                        x_pixel = int(x * x_dim)
+                        y_pixel = int(y * y_dim)
+                        radius_pixel = int(radius * min(x_dim, y_dim))  # Convert radius to pixel scale
+
+                        # Get the indices of the circle
+                        rr, cc = disk((y_pixel, x_pixel), radius_pixel, shape=circles.shape)
+
+                        # Set the circle area in the `circles` array to 1
+                        circles[rr, cc] = [r, g, b, 1]
+
+                    sel_u = (centers_proj[:, 0] - x0) / (x1 - x0 + 1e-8)  # avoid divide by zero
+                    sel_v = (centers_proj[:, 1] - y0) / (y1 - y0 + 1e-8)
+
+                    sel_u = np.clip(sel_u, 0, 1)
+                    sel_v = np.clip(sel_v, 0, 1)
+
+                    # Map to image pixel coordinates
+                    H, W, _ = circles.shape
+                    u = np.clip((sel_u * W).astype(int), 0, W - 1)
+                    v = np.clip((sel_v * H).astype(int), 0, H - 1)
+
+                    image_rgbs = circles[v, u]
+                    # print("Image rgbs {0}".format(image_rgbs))
+
+                    # Combine with camera mask
+                    ported_mask = camera_front_mask & (image_rgbs[ :, 3] == 1)
+
                     # Update colors of affected splats
-                    splat_data["rgbs"][ported_mask] = np.array([r, g, b])  # magenta
+                    splat_data["rgbs"][ported_mask] = image_rgbs[ported_mask][:, :3]  # set to custom color
 
                     # Update visualization
                     gs_handle = update_gaussian_splats(server, gs_handle, splat_data)
@@ -604,7 +646,7 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
             depth_slider_handle = server.gui.add_slider("Max paint depth", 0.0, 10.0, 0.05, 3.0)
             opacity_slider_handle = server.gui.add_slider("Opacity threshold", 0.0, 1.0, 0.1, 0.8)
 
-            upload_button = server.gui.add_upload_button("Upload Image", hint="Upload a JPG or PNG file")
+            upload_button = server.gui.add_upload_button("Upload Image", hint="Upload a JPG or PNG file", icon=viser.Icon.PHOTO_UP)
 
             @upload_button.on_upload
             def _(event: viser.GuiEvent) -> None:
@@ -684,10 +726,6 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
                         (centers_proj[:, 1] >= y0) & (centers_proj[:, 1] <= y1) & 
                         camera_front_mask & (splat_data["opacities"][:, 0] >= opacity_threshold)
                     )   
-                    # mask = (
-                    #     (centers_proj[:, 0] >= x0) & (centers_proj[:, 0] <= x1) &
-                    #     (centers_proj[:, 1] >= y0) & (centers_proj[:, 1] <= y1)
-                    # )
 
                     # Normalize within the selection rectangle
                     sel_u = (centers_proj[:, 0] - x0) / (x1 - x0 + 1e-8)  # avoid divide by zero

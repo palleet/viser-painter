@@ -14,6 +14,7 @@ import numpy as np
 import numpy.typing as npt
 import tyro
 from plyfile import PlyData
+from PIL import Image
 
 import viser
 from viser import transforms as tf
@@ -60,28 +61,6 @@ def point_to_polyline_distance(points, polyline):
         min_dists = np.minimum(min_dists, dists)
     
     return min_dists
-
-def update_gaussian_splats(server, gs_handle, splat_data):
-    """
-    Updates the Gaussian splats in the scene with the given splat data.
-
-    Args:
-        server: The Viser server instance.
-        gs_handle: The current Gaussian splats handle.
-        splat_data: The updated splat data dictionary containing centers, rgbs, opacities, and covariances.
-    """
-    # Remove the existing Gaussian splats
-    gs_handle.remove()
-
-    # Add the updated Gaussian splats to the scene
-    gs_handle = server.scene.add_gaussian_splats(
-        f"/0/gaussian_splats",
-        centers=splat_data["centers"],
-        rgbs=splat_data["rgbs"],
-        opacities=splat_data["opacities"],
-        covariances=splat_data["covariances"],
-    )
-    return gs_handle
 
 def load_splat_file(splat_path: Path, center: bool = False) -> SplatFile:
     """Load an antimatter15-style splat file."""
@@ -169,7 +148,7 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
     )
 
     @gui_reset_up.on_click
-    def _(event: viser.GuiEvent) -> None:
+    def _() -> None:
         client = event.client
         assert client is not None
         client.camera.up_direction = tf.SO3(client.camera.wxyz) @ np.array(
@@ -220,7 +199,6 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
                 opacities=splat_data["opacities"],
                 covariances=splat_data["covariances"],
             )
-
         paint_selection_button_handle = server.gui.add_button("Paint selection", icon=viser.Icon.PAINT)
         @paint_selection_button_handle.on_click
         def _(_, gs_handle=gs_handle):
@@ -476,7 +454,116 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
             @server.scene.on_pointer_callback_removed
             def _():
                 brush_paint_button_handle.disabled = False
-    
+
+        global uploaded_image_array
+        global uploaded_image_handle
+        # Global/shared variables
+        uploaded_image_array = None
+        uploaded_image_handle = None  # Keep track of the image handle
+
+        upload_button = server.gui.add_upload_button("Upload Image", hint="Upload a JPG or PNG file")
+
+        @upload_button.on_upload
+        def _(event: viser.GuiEvent) -> None:
+            global uploaded_image_array, uploaded_image_handle
+
+            uploaded_file = upload_button.value
+            file_name = uploaded_file.name
+
+            if file_name.lower().endswith(('.jpg', '.jpeg', '.png')):
+                with open(file_name, 'wb') as f:
+                    f.write(uploaded_file.content)
+                print(f"File '{file_name}' uploaded and saved successfully.")
+
+                # Load and store the image as NumPy array (shape H x W x 3)
+                image = Image.open(file_name).convert('RGB')
+                uploaded_image_array = np.array(image)
+                print(f"Image loaded with shape: {uploaded_image_array.shape}")
+
+                # If an old image handle exists, remove it first
+                if uploaded_image_handle is not None:
+                    uploaded_image_handle.remove()
+                    uploaded_image_handle = None
+
+                # Add the new image and store its handle
+                uploaded_image_handle = server.gui.add_image(
+                    image=uploaded_image_array,
+                    label="Uploaded Image",
+                    format="jpeg",
+                    jpeg_quality=90
+                )
+            else:
+                print("Invalid file type. Please upload a JPG or PNG file.")
+
+        image_selection = server.gui.add_button("Image Selection", icon=viser.Icon.PAINT)
+        @image_selection.on_click
+        def _(_, gs_handle=gs_handle):
+            image_selection.disabled = True
+
+            @server.scene.on_pointer_event(event_type="rect-select")
+            def _(message: viser.ScenePointerEvent, gs_handle=gs_handle) -> None:
+                server.scene.remove_pointer_callback()
+
+                if uploaded_image_array is None:
+                    print("No image uploaded yet.")
+                    
+                    return
+
+                camera = message.client.camera
+
+                R_camera_world = tf.SE3.from_rotation_and_translation(
+                    tf.SO3(camera.wxyz), camera.position
+                ).inverse()
+                centers_camera_frame = (
+                    R_camera_world.as_matrix()
+                    @ np.hstack([splat_data["centers"], np.ones((splat_data["centers"].shape[0], 1))]).T
+                ).T[:, :3]
+
+                fov, aspect = camera.fov, camera.aspect
+                centers_proj = centers_camera_frame[:, :2] / centers_camera_frame[:, 2].reshape(-1, 1)
+                centers_proj /= np.tan(fov / 2)
+                centers_proj[:, 0] /= aspect
+
+                centers_proj = (1 + centers_proj) / 2
+
+                (x0, y0), (x1, y1) = message.screen_pos
+                mask = (
+                    (centers_proj[:, 0] >= x0) & (centers_proj[:, 0] <= x1) &
+                    (centers_proj[:, 1] >= y0) & (centers_proj[:, 1] <= y1)
+                )
+
+                # Normalize within the selection rectangle
+                sel_u = (centers_proj[:, 0] - x0) / (x1 - x0 + 1e-8)  # avoid divide by zero
+                sel_v = (centers_proj[:, 1] - y0) / (y1 - y0 + 1e-8)
+
+                sel_u = np.clip(sel_u, 0, 1)
+                sel_v = np.clip(sel_v, 0, 1)
+
+                # Map to image pixel coordinates
+                H, W, _ = uploaded_image_array.shape
+                u = np.clip((sel_u * W).astype(int), 0, W - 1)
+                v = np.clip((sel_v * H).astype(int), 0, H - 1)
+
+                # Get RGB values from the image and normalize to [0,1]
+                image_rgbs = uploaded_image_array[v, u] / 255.0
+
+                # Update only selected splats
+                splat_data["rgbs"][mask] = image_rgbs[mask]
+
+                # Re-render the splats
+                gs_handle.remove()
+                gs_handle = server.scene.add_gaussian_splats(
+                    f"/0/gaussian_splats",
+                    centers=splat_data["centers"],
+                    rgbs=splat_data["rgbs"],
+                    opacities=splat_data["opacities"],
+                    covariances=splat_data["covariances"],
+                )
+
+            @server.scene.on_pointer_callback_removed
+            def _():
+                image_selection.disabled = False
+
 
 
     while True:

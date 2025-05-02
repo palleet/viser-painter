@@ -309,6 +309,7 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
             rgba_button_handle = server.gui.add_rgba("Color picker", (0, 255, 255, 255))
             depth_slider_handle = server.gui.add_slider("Max paint depth", 0.0, 10.0, 0.05, 3.0)
             opacity_slider_handle = server.gui.add_slider("Opacity threshold", 0.0, 1.0, 0.1, 0.8)
+            size_slider_handle = server.gui.add_slider("Brush size", 1, 100, 10, 30)
             # RECTANGLE SELECT
             paint_selection_button_handle = server.gui.add_button("Paint selection", icon=viser.Icon.PAINT)
             @paint_selection_button_handle.on_click
@@ -395,15 +396,15 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
         )
 
             @brush_paint_button_handle.on_click
-            def _(_, gs_handle=gs_handle, rgb_button_handle=rgba_button_handle, depth_slider_handle=depth_slider_handle, opacity_slider_handle=opacity_slider_handle):
+            def _(_, gs_handle=gs_handle, rgb_button_handle=rgba_button_handle, depth_slider_handle=depth_slider_handle, opacity_slider_handle=opacity_slider_handle, size_slider_handle=size_slider_handle):
                 brush_paint_button_handle.disabled = True
                 
                 @server.scene.on_pointer_event(event_type="brush")
-                def _(message: viser.ScenePointerEvent, gs_handle=gs_handle, rgb_button_handle=rgb_button_handle, depth_slider_handle=depth_slider_handle, opacity_slider_handle=opacity_slider_handle) -> None:
+                def _(message: viser.ScenePointerEvent, gs_handle=gs_handle, rgb_button_handle=rgb_button_handle, depth_slider_handle=depth_slider_handle, opacity_slider_handle=opacity_slider_handle, size_slider_handle=size_slider_handle) -> None:
                     server.scene.remove_pointer_callback()
                     camera = message.client.camera
 
-                    brush_size = 30
+                    brush_size = size_slider_handle.value
                     
                     # max range for slider
                     depth_range = depth_slider_handle.value

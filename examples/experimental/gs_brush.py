@@ -492,7 +492,7 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
         image_selection = server.gui.add_button("Image Selection", icon=viser.Icon.PAINT)
         @image_selection.on_click
         def _(_, gs_handle=gs_handle):
-            paint_selection_button_handle.disabled = True
+            image_selection.disabled = True
 
             @server.scene.on_pointer_event(event_type="rect-select")
             def _(message: viser.ScenePointerEvent, gs_handle=gs_handle) -> None:
@@ -500,6 +500,7 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
 
                 if uploaded_image_array is None:
                     print("No image uploaded yet.")
+                    
                     return
 
                 camera = message.client.camera
@@ -525,10 +526,17 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
                     (centers_proj[:, 1] >= y0) & (centers_proj[:, 1] <= y1)
                 )
 
-                # Map centers_proj [0,1] to image pixel coordinates
+                # Normalize within the selection rectangle
+                sel_u = (centers_proj[:, 0] - x0) / (x1 - x0 + 1e-8)  # avoid divide by zero
+                sel_v = (centers_proj[:, 1] - y0) / (y1 - y0 + 1e-8)
+
+                sel_u = np.clip(sel_u, 0, 1)
+                sel_v = np.clip(sel_v, 0, 1)
+
+                # Map to image pixel coordinates
                 H, W, _ = uploaded_image_array.shape
-                u = np.clip((centers_proj[:, 0] * W).astype(int), 0, W - 1)
-                v = np.clip((centers_proj[:, 1] * H).astype(int), 0, H - 1)
+                u = np.clip((sel_u * W).astype(int), 0, W - 1)
+                v = np.clip((sel_v * H).astype(int), 0, H - 1)
 
                 # Get RGB values from the image and normalize to [0,1]
                 image_rgbs = uploaded_image_array[v, u] / 255.0
@@ -548,7 +556,8 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
 
             @server.scene.on_pointer_callback_removed
             def _():
-                paint_selection_button_handle.disabled = False
+                image_selection.disabled = False
+
 
 
     while True:

@@ -14,6 +14,7 @@ import numpy as np
 import numpy.typing as npt
 import tyro
 from plyfile import PlyData
+from PIL import Image
 
 import viser
 from viser import transforms as tf
@@ -60,6 +61,7 @@ def point_to_polyline_distance(points, polyline):
         min_dists = np.minimum(min_dists, dists)
     
     return min_dists
+
 
 def load_splat_file(splat_path: Path, center: bool = False) -> SplatFile:
     """Load an antimatter15-style splat file."""
@@ -147,7 +149,7 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
     )
 
     @gui_reset_up.on_click
-    def _(event: viser.GuiEvent) -> None:
+    def _() -> None:
         client = event.client
         assert client is not None
         client.camera.up_direction = tf.SO3(client.camera.wxyz) @ np.array(
@@ -447,15 +449,43 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
             def _():
                 brush_paint_button_handle.disabled = False
 
+        global uploaded_image_array
+        global uploaded_image_handle
+        # Global/shared variables
+        uploaded_image_array = None
+        uploaded_image_handle = None  # Keep track of the image handle
+
         upload_button = server.gui.add_upload_button("Upload Image", hint="Upload a JPG or PNG file")
+
         @upload_button.on_upload
         def _(event: viser.GuiEvent) -> None:
+            global uploaded_image_array, uploaded_image_handle
+
             uploaded_file = upload_button.value
             file_name = uploaded_file.name
+
             if file_name.lower().endswith(('.jpg', '.jpeg', '.png')):
                 with open(file_name, 'wb') as f:
                     f.write(uploaded_file.content)
                 print(f"File '{file_name}' uploaded and saved successfully.")
+
+                # Load and store the image as NumPy array (shape H x W x 3)
+                image = Image.open(file_name).convert('RGB')
+                uploaded_image_array = np.array(image)
+                print(f"Image loaded with shape: {uploaded_image_array.shape}")
+
+                # If an old image handle exists, remove it first
+                if uploaded_image_handle is not None:
+                    uploaded_image_handle.remove()
+                    uploaded_image_handle = None
+
+                # Add the new image and store its handle
+                uploaded_image_handle = server.gui.add_image(
+                    image=uploaded_image_array,
+                    label="Uploaded Image",
+                    format="jpeg",
+                    jpeg_quality=90
+                )
             else:
                 print("Invalid file type. Please upload a JPG or PNG file.")
 
@@ -468,9 +498,12 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
             def _(message: viser.ScenePointerEvent, gs_handle=gs_handle) -> None:
                 server.scene.remove_pointer_callback()
 
+                if uploaded_image_array is None:
+                    print("No image uploaded yet.")
+                    return
+
                 camera = message.client.camera
 
-                # Transform splat centers into the camera frame
                 R_camera_world = tf.SE3.from_rotation_and_translation(
                     tf.SO3(camera.wxyz), camera.position
                 ).inverse()
@@ -479,26 +512,31 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
                     @ np.hstack([splat_data["centers"], np.ones((splat_data["centers"].shape[0], 1))]).T
                 ).T[:, :3]
 
-                # Project the centers onto the image plane
                 fov, aspect = camera.fov, camera.aspect
                 centers_proj = centers_camera_frame[:, :2] / centers_camera_frame[:, 2].reshape(-1, 1)
                 centers_proj /= np.tan(fov / 2)
                 centers_proj[:, 0] /= aspect
 
-                # Normalize to [0, 1] range
                 centers_proj = (1 + centers_proj) / 2
 
-                # Check which centers are inside the selected rectangle
                 (x0, y0), (x1, y1) = message.screen_pos
                 mask = (
                     (centers_proj[:, 0] >= x0) & (centers_proj[:, 0] <= x1) &
                     (centers_proj[:, 1] >= y0) & (centers_proj[:, 1] <= y1)
                 )
 
-                # Update the colors of the selected splats
-                splat_data["rgbs"][mask] = np.array([0.5, 0.0, 0.7])  # Example color: purple
+                # Map centers_proj [0,1] to image pixel coordinates
+                H, W, _ = uploaded_image_array.shape
+                u = np.clip((centers_proj[:, 0] * W).astype(int), 0, W - 1)
+                v = np.clip((centers_proj[:, 1] * H).astype(int), 0, H - 1)
 
-                # Re-render the splats with updated colors
+                # Get RGB values from the image and normalize to [0,1]
+                image_rgbs = uploaded_image_array[v, u] / 255.0
+
+                # Update only selected splats
+                splat_data["rgbs"][mask] = image_rgbs[mask]
+
+                # Re-render the splats
                 gs_handle.remove()
                 gs_handle = server.scene.add_gaussian_splats(
                     f"/0/gaussian_splats",
@@ -507,7 +545,6 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
                     opacities=splat_data["opacities"],
                     covariances=splat_data["covariances"],
                 )
-                
 
             @server.scene.on_pointer_callback_removed
             def _():

@@ -1729,7 +1729,7 @@ class SceneApi:
             ).add_done_callback(print_threadpool_errors)
 
     def on_pointer_event(
-        self, event_type: Literal["click", "rect-select"]
+        self, event_type: Literal["click", "rect-select", "brush"]
     ) -> Callable[
         [Callable[[ScenePointerEvent], None]], Callable[[ScenePointerEvent], None]
     ]:

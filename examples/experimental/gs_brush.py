@@ -61,6 +61,28 @@ def point_to_polyline_distance(points, polyline):
     
     return min_dists
 
+def update_gaussian_splats(server, gs_handle, splat_data):
+    """
+    Updates the Gaussian splats in the scene with the given splat data.
+
+    Args:
+        server: The Viser server instance.
+        gs_handle: The current Gaussian splats handle.
+        splat_data: The updated splat data dictionary containing centers, rgbs, opacities, and covariances.
+    """
+    # Remove the existing Gaussian splats
+    gs_handle.remove()
+
+    # Add the updated Gaussian splats to the scene
+    gs_handle = server.scene.add_gaussian_splats(
+        f"/0/gaussian_splats",
+        centers=splat_data["centers"],
+        rgbs=splat_data["rgbs"],
+        opacities=splat_data["opacities"],
+        covariances=splat_data["covariances"],
+    )
+    return gs_handle
+
 def load_splat_file(splat_path: Path, center: bool = False) -> SplatFile:
     """Load an antimatter15-style splat file."""
     start_time = time.time()
@@ -292,8 +314,8 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
                 )
 
         rgba_button_handle = server.gui.add_rgba("Color picker", (0, 255, 255, 255))
-        depth_slider_handle = server.gui.add_slider("Max paint depth", 0.0, 1.0, 0.05, 0.1)
-        opacity_slider_handle = server.gui.add_slider("Opacity threshold", 0.0, 1.0, 0.1, 1.0)
+        depth_slider_handle = server.gui.add_slider("Max paint depth", 0.0, 5.0, 0.05, 3.0)
+        opacity_slider_handle = server.gui.add_slider("Opacity threshold", 0.0, 1.0, 0.1, 0.8)
 
         # RECTANGLE SELECT
         paint_selection_button_handle = server.gui.add_button("Paint selection", icon=viser.Icon.PAINT)
@@ -308,12 +330,10 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
                 camera = message.client.camera
 
                 # max range for slider
-                depth_range = 5
-                depth_range_norm = depth_range * depth_slider_handle.value
+                depth_range = depth_slider_handle.value
 
                 # opacity threshold assignment
                 opacity_threshold = opacity_slider_handle.value
-                print("Opacity threshold is {0}".format(opacity_threshold))
                 
                 # Code modified from 20_scene_pointer.py
                 R_camera_world = tf.SE3.from_rotation_and_translation(
@@ -352,7 +372,7 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
                 (x0, y0), (x1, y1) = message.screen_pos
                 first_hit_depth = min(center for index, center in enumerate(centers_camera[:, 2]) if ((splat_data["opacities"][index] >= opacity_threshold) and (center > 0)))
                 print("First hit depth is {0}".format(first_hit_depth))
-                camera_front_mask = (centers_camera[:, 2] > 0) & (centers_camera[:, 2] <= (first_hit_depth + depth_range_norm))
+                camera_front_mask = (centers_camera[:, 2] > 0) & (centers_camera[:, 2] <= (first_hit_depth + depth_range))
                 mask = (
                     (centers_proj[:, 0] >= x0) & (centers_proj[:, 0] <= x1) &
                     (centers_proj[:, 1] >= y0) & (centers_proj[:, 1] <= y1) & 
@@ -366,14 +386,7 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
                 splat_data["rgbs"][mask] = np.array([r, g, b]) # Paint
 
                 # Update splat by remove and creating new scene with updated colors
-                gs_handle.remove()
-                gs_handle = server.scene.add_gaussian_splats(
-                    f"/0/gaussian_splats",
-                    centers=splat_data["centers"],
-                    rgbs=splat_data["rgbs"],
-                    opacities=splat_data["opacities"],
-                    covariances=splat_data["covariances"],
-                )
+                gs_handle = update_gaussian_splats(server, gs_handle, splat_data)
                 
 
             @server.scene.on_pointer_callback_removed
@@ -398,11 +411,13 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
                 server.scene.remove_pointer_callback()
                 camera = message.client.camera
 
-                brush_size = 20
+                brush_size = 30
                 
                 # max range for slider
-                depth_range = 5
-                depth_range_norm = depth_range * depth_slider_handle.value
+                depth_range = depth_slider_handle.value
+
+                # opacity threshold assignment
+                opacity_threshold = opacity_slider_handle.value
 
                 # Transform centers to camera space
                 R_camera_world = tf.SE3.from_rotation_and_translation(
@@ -432,10 +447,12 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
                 # Get brush points
                 brush_points = np.array(message.screen_pos)  # (M, 2) array
 
+                first_hit_depth = min(center for index, center in enumerate(centers_camera_frame[:, 2]) if ((splat_data["opacities"][index] >= opacity_threshold) and (center > 0)))
+
                 # Transform centers to camera frame again (for front mask)
                 centers_h = np.hstack([splat_data["centers"], np.ones((splat_data["centers"].shape[0], 1))])
                 centers_camera = (R_camera_world.as_matrix() @ centers_h.T).T[:, :3]
-                camera_front_mask = (centers_camera[:, 2] > 0) & (centers_camera[:, 2] <= depth_range_norm)
+                camera_front_mask = (centers_camera[:, 2] > 0) & (centers_camera[:, 2] <= depth_range)
 
                 # Compute polyline distance
                 min_dists = point_to_polyline_distance(centers_proj, brush_points)
@@ -453,14 +470,7 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
                 splat_data["rgbs"][ported_mask] = np.array([r, g, b])  # magenta
 
                 # Update visualization
-                gs_handle.remove()
-                gs_handle = server.scene.add_gaussian_splats(
-                    f"/0/gaussian_splats",
-                    centers=splat_data["centers"],
-                    rgbs=splat_data["rgbs"],
-                    opacities=splat_data["opacities"],
-                    covariances=splat_data["covariances"],
-                )
+                gs_handle = update_gaussian_splats(server, gs_handle, splat_data)
 
 
             @server.scene.on_pointer_callback_removed

@@ -309,9 +309,12 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
 
                 # Select only those with positive z (in front of the camera)
                 camera_front_mask = centers_camera[:, 2] > 0
+                print("🤖camera_front size {0}".format(camera_front_mask.size))
+                print("🐊centers_proj[:, 0] size {0}".format(centers_proj[:, 0].size))
 
                 # Check which centers are inside the selected rectangle
                 (x0, y0), (x1, y1) = message.screen_pos
+                print("x0 is {0}".format(x0))
                 mask = (
                     (centers_proj[:, 0] >= x0) & (centers_proj[:, 0] <= x1) &
                     (centers_proj[:, 1] >= y0) & (centers_proj[:, 1] <= y1) & camera_front_mask
@@ -338,44 +341,6 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
             def _():
                 paint_selection_button_handle.disabled = False
         
-        paint_all_button_handle = server.gui.add_button("Paint all splats", icon=viser.Icon.PAINT)
-        @paint_all_button_handle.on_click
-        def _(_, gs_handle=gs_handle):
-            splat_data = copy.deepcopy(original_splat_data)
-            centers = splat_data["centers"]
-
-            # Calculate the bounding box of the centers
-            min_xyz = centers.min(axis=0)  # [min_x, min_y, min_z]
-            max_xyz = centers.max(axis=0)  # [max_x, max_y, max_z]
-            range_xyz = max_xyz - min_xyz  # Range for normalization
-
-            for i, rgb in enumerate(splat_data["rgbs"]):
-                curr_center = splat_data["centers"][i]
-
-                # Normalize the position to [0, 1]
-                normalized_pos = (curr_center - min_xyz) / range_xyz
-
-                # convert current rgb values to HSV
-                curr_hsv = colorsys.rgb_to_hsv(rgb[0], rgb[1], rgb[2])
-
-                # Map normalized position to HSV
-                hue = ((normalized_pos[0] + normalized_pos[1] + normalized_pos[2]) * 3.0) % 1.0
-                saturation = curr_hsv[1]         # vibrancy
-                value = curr_hsv[2]              # brightness
-
-                # Convert HSV to RGB
-                splat_data["rgbs"][i] = colorsys.hsv_to_rgb(hue, saturation, value)
-
-            gs_handle.remove()            
-            new_gs_handle = server.scene.add_gaussian_splats(
-                f"/0/gaussian_splats",
-                centers=splat_data["centers"],
-                rgbs=splat_data["rgbs"],
-                opacities=splat_data["opacities"],
-                covariances=splat_data["covariances"],
-            )
-            gs_handle = new_gs_handle
-
         @server.scene.on_pointer_callback_removed
         def _():
                 paint_selection_button_handle.disabled = False
@@ -411,8 +376,8 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
 
                 # Project the centers onto the image plane
                 fov, aspect = camera.fov, camera.aspect
-                centers_proj = valid_centers[:, :2] / valid_centers[:, 2].reshape(-1, 1)
-                centers_proj /= np.tan(np.radians(fov) / 2)
+                centers_proj = centers_camera_frame[:, :2] / centers_camera_frame[:, 2].reshape(-1, 1)
+                centers_proj /= np.tan(fov / 2)
                 centers_proj[:, 0] /= aspect
 
                 # Normalize to [0, 1] range (origin at bottom-left)
@@ -421,6 +386,9 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
                 # Convert brush size from pixels to normalized coordinates
                 # (approximate conversion - may need adjustment)
                 brush_size_norm = brush_size / 1000.0
+                print("Brush size: {0}".format(brush_size))
+                print("Brush size norm: {0}".format(brush_size_norm))
+                radius = brush_size_norm / 2.0
                 
                 # Create mask for points affected by the brush stroke
                 affected_mask = np.zeros(len(centers_camera_frame), dtype=bool)
@@ -432,21 +400,49 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
 
                 print("🎨 New stroke made")
 
-                for brush_point in brush_points:
-                    print("brush point here: {0}".format(brush_point))
-                    bx, by = brush_point
-                    # Calculate distance from each point to brush center
-                    distances = np.sqrt(
-                        (centers_proj[:, 0] - bx)**2 + 
-                        (centers_proj[:, 1] - by)**2
-                    )
-                    # Points within brush radius are affected
-                    affected = distances <= brush_size_norm
-                    affected_mask[in_front] = affected_mask[in_front] | affected
-                print("\n")
+                # create bounding box around brush points
+                x_values = [x for x, y in brush_points]
+                y_values = [y for x, y in brush_points]
+
+                x_min = min(x_values) - radius
+                y_min = min(y_values) - radius
+                x_max = max(x_values) + radius
+                y_max = max(y_values) + radius
+                
+                print("x_min: {0}, x_max: {1}, y_min: {2}, y_max{3}".format(x_min, x_max, y_min, y_max))
+
+
+                # for brush_point in brush_points:
+                #     print("brush point here: {0}".format(brush_point))
+                #     bx, by = brush_point
+                #     # Calculate distance from each point to brush center
+                #     distances = np.sqrt(
+                #         (centers_proj[:, 0] - bx)**2 + 
+                #         (centers_proj[:, 1] - by)**2
+                #     )
+                #     # Points within brush radius are affected
+                #     affected = distances <= brush_size_norm
+                #     affected_mask[in_front] = affected_mask[in_front] | affected
+                # print("\n")
+
+                # ONLY IN FRONT OF CAMERA
+                centers_h = np.hstack([splat_data["centers"], np.ones((splat_data["centers"].shape[0], 1))])
+                # Transform centers to camera frame
+                centers_camera = (R_camera_world.as_matrix() @ centers_h.T).T[:, :3]  # (N, 3)
+
+                # Select only those with positive z (in front of the camera)
+                camera_front_mask = centers_camera[:, 2] > 0
+                print("🤖camera_front size {0}".format(camera_front_mask.size))
+                print("🐊centers_proj[:, 0] size {0}".format(centers_proj[:, 0].size))
+
+
+                ported_mask = (
+                    (centers_proj[:, 0] >= x_min) & (centers_proj[:, 0] <= x_max) &
+                    (centers_proj[:, 1] >= y_min) & (centers_proj[:, 1] <= y_max) & camera_front_mask
+                )   
                 
                 # Update colors of affected splats using current color
-                splat_data["rgbs"][affected_mask] = np.array([1, 0.0, 1]) # Paint
+                splat_data["rgbs"][ported_mask] = np.array([1, 0.0, 1]) # Paint
 
                 # Update visualization
                 gs_handle.remove()

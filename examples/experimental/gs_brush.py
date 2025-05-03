@@ -212,7 +212,6 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
 
         @paint_all_button_handle.on_click
         def _(_, gs_handle=gs_handle):
-
             print("Print all pressed!")
             for rgb in splat_data["rgbs"]:
                 splat_data["rgbs"][:] = np.array([1.0, 0.0, 1.0])
@@ -234,7 +233,6 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
 
         @paint_selection_button_handle.on_click
         def _(_, gs_handle=gs_handle):
-            
             paint_selection_button_handle.disabled = True
 
             @server.scene.on_pointer_event(event_type="rect-select")
@@ -324,9 +322,8 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
 
         @reset_scene_color_button_handle.on_click
         def _(_, gs_handle=gs_handle):
-
             splat_history.append(copy.deepcopy(splat_data))
-           
+
             gs_handle.remove()
             splat_data["centers"] = original_splat_data["centers"].copy()
             splat_data["covariances"] = original_splat_data["covariances"].copy()
@@ -623,8 +620,6 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
 
                     # Convert HSV to RGB
                     splat_data["rgbs"][i] = colorsys.hsv_to_rgb(hue, saturation, value)
-
-
 
                 gs_handle.remove()
                 new_gs_handle = server.scene.add_gaussian_splats(

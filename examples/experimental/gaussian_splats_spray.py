@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import colorsys
 import copy
+import random
 import time
-from collections import deque
 from pathlib import Path
 from typing import TypedDict
 
@@ -108,9 +109,6 @@ def load_ply_file(ply_file_path: Path, center: bool = False) -> SplatFile:
 
 
 def main(splat_paths: tuple[Path, ...] = ()) -> None:
-    # Holds up to 10 previous states
-    splat_history = deque(maxlen=10)
-
     server = viser.ViserServer()
     server.gui.configure_theme(dark_mode=False)
     gui_reset_up = server.gui.add_button(
@@ -176,72 +174,28 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
                 covariances=splat_data["covariances"],
             )
 
-        paint_selection_button_handle = server.gui.add_button(
-            "Paint selection", icon=viser.Icon.PAINT
+        paint_button_handle = server.gui.add_button(
+            "Paint splats", icon=viser.Icon.PAINT
         )
 
-        @paint_selection_button_handle.on_click
-        def _(_, gs_handle=gs_handle):
-            paint_selection_button_handle.disabled = True
+        @paint_button_handle.on_click
+        def _(_):
+            paint_button_handle.disabled = True
 
             @server.scene.on_pointer_event(event_type="rect-select")
-            def _(message: viser.ScenePointerEvent, gs_handle=gs_handle) -> None:
+            def _(message: viser.ScenePointerEvent) -> None:
                 server.scene.remove_pointer_callback()
 
                 camera = message.client.camera
 
-                # Transform splat centers into the camera frame
-                R_camera_world = tf.SE3.from_rotation_and_translation(
-                    tf.SO3(camera.wxyz), camera.position
-                ).inverse()
-                centers_camera_frame = (
-                    R_camera_world.as_matrix()
-                    @ np.hstack(
-                        [
-                            splat_data["centers"],
-                            np.ones((splat_data["centers"].shape[0], 1)),
-                        ]
-                    ).T
-                ).T[:, :3]
-
-                # Project the centers onto the image plane
-                fov, aspect = camera.fov, camera.aspect
-                centers_proj = centers_camera_frame[:, :2] / centers_camera_frame[
-                    :, 2
-                ].reshape(-1, 1)
-                centers_proj /= np.tan(fov / 2)
-                centers_proj[:, 0] /= aspect
-
-                # Normalize to [0, 1] range
-                centers_proj = (1 + centers_proj) / 2
-
-                # Check which centers are inside the selected rectangle
                 (x0, y0), (x1, y1) = message.screen_pos
-                mask = (
-                    (centers_proj[:, 0] >= x0)
-                    & (centers_proj[:, 0] <= x1)
-                    & (centers_proj[:, 1] >= y0)
-                    & (centers_proj[:, 1] <= y1)
-                )
+                screen_corners = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
 
-                # Update the colors of the selected splats
-                splat_data["rgbs"][mask] = np.array(
-                    [0.5, 0.0, 0.7]
-                )  # Example color: purple
-
-                # Re-render the splats with updated colors
-                gs_handle.remove()
-                gs_handle = server.scene.add_gaussian_splats(
-                    "/0/gaussian_splats",
-                    centers=splat_data["centers"],
-                    rgbs=splat_data["rgbs"],
-                    opacities=splat_data["opacities"],
-                    covariances=splat_data["covariances"],
-                )
+                print("Corners are {0}".format(screen_corners))
 
             @server.scene.on_pointer_callback_removed
             def _():
-                paint_selection_button_handle.disabled = False
+                paint_button_handle.disabled = False
 
     for i, splat_path in enumerate(splat_paths):
         if splat_path.suffix == ".splat":
@@ -251,7 +205,6 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
         else:
             raise SystemExit("Please provide a filepath to a .splat or .ply file.")
 
-        # keep original splat data to reset back to
         original_splat_data = copy.deepcopy(splat_data)
 
         # server.scene.add_transform_controls(f"/{i}")
@@ -263,6 +216,13 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
             covariances=splat_data["covariances"],
         )
 
+        remove_button = server.gui.add_button(f"Remove splat object {i}")
+
+        @remove_button.on_click
+        def _(_, gs_handle=gs_handle, remove_button=remove_button) -> None:
+            gs_handle.remove()
+            remove_button.remove()
+
         reset_scene_color_button_handle = server.gui.add_button(
             "Reset scene colors", icon=viser.Icon.RESTORE
         )
@@ -271,39 +231,179 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
         def _(_, gs_handle=gs_handle):
             gs_handle.remove()
 
-            splat_data["centers"] = original_splat_data["centers"].copy()
-            splat_data["covariances"] = original_splat_data["covariances"].copy()
-            splat_data["opacities"] = original_splat_data["opacities"].copy()
-            splat_data["rgbs"] = original_splat_data["rgbs"].copy()
-
-            gs_handle = server.scene.add_gaussian_splats(
+            new_gs_handle = server.scene.add_gaussian_splats(
                 "/0/gaussian_splats",
                 centers=original_splat_data["centers"],
                 rgbs=original_splat_data["rgbs"],
                 opacities=original_splat_data["opacities"],
                 covariances=original_splat_data["covariances"],
             )
+            gs_handle = new_gs_handle
 
-        rgb_button_handle = server.gui.add_rgb("Color picker", (0, 0, 0))
+        paint_all_button_handle = server.gui.add_button(
+            "Paint all splats", icon=viser.Icon.PAINT
+        )
+
+        @paint_all_button_handle.on_click
+        def _(_, gs_handle=gs_handle):
+            splat_data = copy.deepcopy(original_splat_data)
+            centers = splat_data["centers"]
+
+            # Calculate the bounding box of the centers
+            min_xyz = centers.min(axis=0)  # [min_x, min_y, min_z]
+            max_xyz = centers.max(axis=0)  # [max_x, max_y, max_z]
+            range_xyz = max_xyz - min_xyz  # Range for normalization
+
+            for i, rgb in enumerate(splat_data["rgbs"]):
+                curr_center = splat_data["centers"][i]
+
+                # Normalize the position to [0, 1]
+                normalized_pos = (curr_center - min_xyz) / range_xyz
+
+                # convert current rgb values to HSV
+                curr_hsv = colorsys.rgb_to_hsv(rgb[0], rgb[1], rgb[2])
+
+                # Map normalized position to HSV
+                hue = (
+                    (normalized_pos[0] + normalized_pos[1] + normalized_pos[2]) * 3.0
+                ) % 1.0
+                saturation = curr_hsv[1]  # vibrancy
+                value = curr_hsv[2]  # brightness
+
+                # Convert HSV to RGB
+                splat_data["rgbs"][i] = colorsys.hsv_to_rgb(hue, saturation, value)
+
+            gs_handle.remove()
+            new_gs_handle = server.scene.add_gaussian_splats(
+                "/0/gaussian_splats",
+                centers=splat_data["centers"],
+                rgbs=splat_data["rgbs"],
+                opacities=splat_data["opacities"],
+                covariances=splat_data["covariances"],
+            )
+            gs_handle = new_gs_handle
+
+        paint_splats_random_button_handle = server.gui.add_button(
+            "Paint random color", icon=viser.Icon.PAINT
+        )
+
+        @paint_splats_random_button_handle.on_click
+        def _(_, gs_handle=gs_handle):
+            splat_data = copy.deepcopy(original_splat_data)
+
+            rand_hue = random.random()
+
+            for i, rgb in enumerate(splat_data["rgbs"]):
+                # convert current rgb values to HSV
+                curr_hsv = colorsys.rgb_to_hsv(rgb[0], rgb[1], rgb[2])
+
+                # Map normalized position to HSV
+                hue = rand_hue
+                saturation = curr_hsv[1]  # vibrancy
+                value = curr_hsv[2]  # brightness
+
+                # Convert HSV to RGB
+                splat_data["rgbs"][i] = colorsys.hsv_to_rgb(hue, saturation, value)
+
+            gs_handle.remove()
+
+            new_gs_handle = server.scene.add_gaussian_splats(
+                "/0/gaussian_splats",
+                centers=splat_data["centers"],
+                rgbs=splat_data["rgbs"],
+                opacities=splat_data["opacities"],
+                covariances=splat_data["covariances"],
+            )
+            gs_handle = new_gs_handle
+
+        paint_bw_button_handle = server.gui.add_button(
+            "Paint scene black and white", icon=viser.Icon.PAINT
+        )
+
+        @paint_bw_button_handle.on_click
+        def _(_, gs_handle=gs_handle):
+            splat_data = copy.deepcopy(original_splat_data)
+
+            for i, rgb in enumerate(splat_data["rgbs"]):
+                # convert current rgb values to HSV
+                curr_hsv = colorsys.rgb_to_hsv(rgb[0], rgb[1], rgb[2])
+
+                # Map normalized position to HSV
+                hue = curr_hsv[0]
+                saturation = 0  # vibrancy
+                value = curr_hsv[2]  # brightness
+
+                # Convert HSV to RGB
+                splat_data["rgbs"][i] = colorsys.hsv_to_rgb(hue, saturation, value)
+
+            gs_handle.remove()
+
+            new_gs_handle = server.scene.add_gaussian_splats(
+                "/0/gaussian_splats",
+                centers=splat_data["centers"],
+                rgbs=splat_data["rgbs"],
+                opacities=splat_data["opacities"],
+                covariances=splat_data["covariances"],
+            )
+            gs_handle = new_gs_handle
+
+        paint_random_indiviual_button_handle = server.gui.add_button(
+            "Paint random individual colors", icon=viser.Icon.PAINT
+        )
+
+        @paint_random_indiviual_button_handle.on_click
+        def _(_, gs_handle=gs_handle):
+            splat_data = copy.deepcopy(original_splat_data)
+
+            for i, rgb in enumerate(splat_data["rgbs"]):
+                # convert current rgb values to HSV
+                curr_hsv = colorsys.rgb_to_hsv(rgb[0], rgb[1], rgb[2])
+
+                # Map normalized position to HSV
+                hue = random.random()
+                saturation = curr_hsv[1]  # vibrancy
+                value = curr_hsv[2]  # brightness
+
+                # Convert HSV to RGB
+                splat_data["rgbs"][i] = colorsys.hsv_to_rgb(hue, saturation, value)
+
+            gs_handle.remove()
+
+            new_gs_handle = server.scene.add_gaussian_splats(
+                "/0/gaussian_splats",
+                centers=splat_data["centers"],
+                rgbs=splat_data["rgbs"],
+                opacities=splat_data["opacities"],
+                covariances=splat_data["covariances"],
+            )
+            gs_handle = new_gs_handle
+
+        # # Add RGB color picker to control paint color
+        # color_picker_handle = server.gui.add_rgb(
+        #     label="Paint Color",
+        #     initial_value=(255, 0, 0),  # Start with red
+        #     hint="Select color for painting splats"
+        # )
+
+        # # Current paint color (normalized to [0,1] range)
+        # current_paint_color = np.array([1.0, 0.0, 0.0])
+
+        # @color_picker_handle.on_update
+        # def _(_):
+        #     global current_paint_color
+        #     # Convert from [0,255] to [0,1] range
+        #     current_paint_color = np.array(color_picker_handle.value) / 255.0
 
         paint_selection_button_handle = server.gui.add_button(
             "Paint selection", icon=viser.Icon.PAINT
         )
 
         @paint_selection_button_handle.on_click
-        def _(_, gs_handle=gs_handle, rgb_button_handle=rgb_button_handle):
+        def _(_, gs_handle=gs_handle):
             paint_selection_button_handle.disabled = True
 
             @server.scene.on_pointer_event(event_type="rect-select")
-            def _(
-                message: viser.ScenePointerEvent,
-                gs_handle=gs_handle,
-                rgb_button_handle=rgb_button_handle,
-            ) -> None:
-                print("Selected color is {0}".format(rgb_button_handle.value))
-
-                splat_history.append(copy.deepcopy(splat_data))
-
+            def _(message: viser.ScenePointerEvent, gs_handle=gs_handle) -> None:
                 server.scene.remove_pointer_callback()
 
                 camera = message.client.camera
@@ -333,47 +433,17 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
                 # Normalize to [0, 1] range
                 centers_proj = (1 + centers_proj) / 2
 
-                # create a plane perpendicular to the camera vector
-                # get camera position
-                v_position = camera.position
-                # get camera rotation vector
-                forward_camera = np.array([0, 0, -1])
-                forward_world = R_camera_world.rotation().apply(forward_camera)
-                print("Camera vector is {0}".format(forward_world))
-
-                centers_h = np.hstack(
-                    [
-                        splat_data["centers"],
-                        np.ones((splat_data["centers"].shape[0], 1)),
-                    ]
-                )
-
-                # Transform centers to camera frame
-                centers_camera = (R_camera_world.as_matrix() @ centers_h.T).T[
-                    :, :3
-                ]  # (N, 3)
-
-                # Select only those with positive z (in front of the camera)
-                camera_front_mask = centers_camera[:, 2] > 0
-                print("🤖camera_front size {0}".format(camera_front_mask.size))
-                print("🐊centers_proj[:, 0] size {0}".format(centers_proj[:, 0].size))
-
                 # Check which centers are inside the selected rectangle
                 (x0, y0), (x1, y1) = message.screen_pos
-                print("x0 is {0}".format(x0))
                 mask = (
                     (centers_proj[:, 0] >= x0)
                     & (centers_proj[:, 0] <= x1)
                     & (centers_proj[:, 1] >= y0)
                     & (centers_proj[:, 1] <= y1)
-                    & camera_front_mask
                 )
 
                 # Update colors of select splats
-                r = rgb_button_handle.value[0] / 255.0
-                g = rgb_button_handle.value[1] / 255.0
-                b = rgb_button_handle.value[2] / 255.0
-                splat_data["rgbs"][mask] = np.array([r, g, b])  # Paint
+                splat_data["rgbs"][mask] = np.array([1, 0.0, 1])  # Paint
 
                 # Update splat by remove and creating new scene with updated colors
                 gs_handle.remove()
@@ -389,10 +459,6 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
             def _():
                 paint_selection_button_handle.disabled = False
 
-        @server.scene.on_pointer_callback_removed
-        def _():
-            paint_selection_button_handle.disabled = False
-
         brush_paint_button_handle = server.gui.add_button(
             "Brush paint", icon=viser.Icon.PAINT, hint="Paint with a brush tool"
         )
@@ -406,7 +472,10 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
                 server.scene.remove_pointer_callback()
                 camera = message.client.camera
 
-                brush_size = 20
+                # Get brush points and size from the message
+                brush_points = message.screen_pos  # List of [x,y] coordinates
+                # brush_size = message.brush_size  # Brush size in pixels
+                brush_size = 100
                 # Transform centers to camera space
                 R_camera_world = tf.SE3.from_rotation_and_translation(
                     tf.SO3(camera.wxyz), camera.position
@@ -427,10 +496,8 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
 
                 # Project the centers onto the image plane
                 fov, aspect = camera.fov, camera.aspect
-                centers_proj = centers_camera_frame[:, :2] / centers_camera_frame[
-                    :, 2
-                ].reshape(-1, 1)
-                centers_proj /= np.tan(fov / 2)
+                centers_proj = valid_centers[:, :2] / valid_centers[:, 2].reshape(-1, 1)
+                centers_proj /= np.tan(np.radians(fov) / 2)
                 centers_proj[:, 0] /= aspect
 
                 # Normalize to [0, 1] range (origin at bottom-left)
@@ -439,79 +506,19 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
                 # Convert brush size from pixels to normalized coordinates
                 # (approximate conversion - may need adjustment)
                 brush_size_norm = brush_size / 1000.0
-                print("Brush size: {0}".format(brush_size))
-                print("Brush size norm: {0}".format(brush_size_norm))
-                radius = brush_size_norm / 2.0
-
-                # TODO fix this
-                # Get brush points and size from the message
-                brush_points = message.screen_pos  # List of [x,y] coordinates
-
-                print("🎨 New stroke made")
-
-                # create bounding box around brush points
-                # x_values = [x for x, y in brush_points]
-                # y_values = [y for x, y in brush_points]
-
-                # x_min = min(x_values) - radius
-                # y_min = min(y_values) - radius
-                # x_max = max(x_values) + radius
-                # y_max = max(y_values) + radius
-
-                # print("x_min: {0}, x_max: {1}, y_min: {2}, y_max{3}".format(x_min, x_max, y_min, y_max))
-
-                # for brush_point in brush_points:
-                #     print("brush point here: {0}".format(brush_point))
-                #     bx, by = brush_point
-                #     # Calculate distance from each point to brush center
-                #     distances = np.sqrt(
-                #         (centers_proj[:, 0] - bx)**2 +
-                #         (centers_proj[:, 1] - by)**2
-                #     )
-                #     # Points within brush radius are affected
-                #     affected = distances <= brush_size_norm
-                #     affected_mask[in_front] = affected_mask[in_front] | affected
-                # print("\n")
-
-                # ONLY IN FRONT OF CAMERA
-                centers_h = np.hstack(
-                    [
-                        splat_data["centers"],
-                        np.ones((splat_data["centers"].shape[0], 1)),
-                    ]
-                )
-                # Transform centers to camera frame
-                centers_camera = (R_camera_world.as_matrix() @ centers_h.T).T[
-                    :, :3
-                ]  # (N, 3)
-
-                # Select only those with positive z (in front of the camera)
-                camera_front_mask = centers_camera[:, 2] > 0
 
                 # Create mask for points affected by the brush stroke
-                affected_mask = np.zeros(len(camera_front_mask), dtype=bool)
-
-                print("🤖camera_front size {0}".format(camera_front_mask.size))
-                print("🐊centers_proj[:, 0] size {0}".format(centers_proj[:, 0].size))
+                affected_mask = np.zeros(len(centers_camera_frame), dtype=bool)
 
                 for brush_point in brush_points:
-                    print("brush point here: {0}".format(brush_point))
                     bx, by = brush_point
                     # Calculate distance from each point to brush center
                     distances = np.sqrt(
                         (centers_proj[:, 0] - bx) ** 2 + (centers_proj[:, 1] - by) ** 2
                     )
-
+                    # Points within brush radius are affected
                     affected = distances <= brush_size_norm
-                    affected_mask[camera_front_mask] |= affected
-
-                # Compute the distance mask
-                # ported_mask = (
-                #     (centers_proj[:, 0] >= x_min) & (centers_proj[:, 0] <= x_max) &
-                #     (centers_proj[:, 1] >= y_min) & (centers_proj[:, 1] <= y_max) &
-                #     affected_mask &
-                #     camera_front_mask
-                # )
+                    affected_mask[in_front] = affected_mask[in_front] | affected
 
                 # Update colors of affected splats using current color
                 splat_data["rgbs"][affected_mask] = np.array([1, 0.0, 1])  # Paint
@@ -536,26 +543,24 @@ def main(splat_paths: tuple[Path, ...] = ()) -> None:
 
         @undo_button_handle.on_click
         def _(_, gs_handle=gs_handle):
-            if not splat_history:
-                print("Nothing to undo")
-                return
-
             undo_button_handle.disabled = True
 
-            # Revert to the last state
-            previous_state = splat_history.pop()
-            current_splat_data = copy.deepcopy(previous_state)
+            # Create a copy of the original splat data
+            splat_data = copy.deepcopy(original_splat_data)
 
+            # Update visualization
             gs_handle.remove()
             gs_handle = server.scene.add_gaussian_splats(
                 "/0/gaussian_splats",
-                centers=current_splat_data["centers"],
-                rgbs=current_splat_data["rgbs"],
-                opacities=current_splat_data["opacities"],
-                covariances=current_splat_data["covariances"],
+                centers=splat_data["centers"],
+                rgbs=splat_data["rgbs"],
+                opacities=splat_data["opacities"],
+                covariances=splat_data["covariances"],
             )
 
-            undo_button_handle.disabled = False
+            @server.scene.on_pointer_callback_removed
+            def _():
+                undo_button_handle.disabled = False
 
     while True:
         time.sleep(10.0)
